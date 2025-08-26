@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "470027033928",
+    "project_id": "one-room-b42b0",
+    "storage_bucket": "one-room-b42b0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:470027033928:android:8dc84d57ef28373b50277d",
+        "android_client_info": {
+          "package_name": "com.example.one_room"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "470027033928-0usilp34nialarub3jmmhnpm2804hc6q.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.one_room",
+            "certificate_hash": "d545be42f9995b745e9e1bffdd7ec79b46a9a95d"
+          }
+        },
+        {
+          "client_id": "470027033928-24geea31rgqcisphc5idgb0h2h6sb635.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAaVHsibhmP5bsTdXa3zgRXLpT2XiyAvs0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "470027033928-24geea31rgqcisphc5idgb0h2h6sb635.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "470027033928-r1ea7lo9pjr81fninb7q13ad8foljrm2.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.oneRoom"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
