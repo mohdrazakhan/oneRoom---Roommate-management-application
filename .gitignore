@@ -43,3 +43,34 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase config (treat as sensitive in public repos)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+macos/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
+
+# Local/host-specific config
+android/local.properties
+**/key.properties
+**/*.keystore
+**/*.jks
+**/*.p12
+**/*.pem
+**/*.p8
+**/*.mobileprovision
+
+# Env files
+.env
+.env.*
+**/*.env
+
+# Flutter ephemeral/generated
+ios/Flutter/ephemeral/
+macos/Flutter/ephemeral/
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+
+# Logs & debug
+firestore-debug.log
+*.orig
