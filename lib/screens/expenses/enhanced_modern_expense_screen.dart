@@ -202,20 +202,40 @@ class _EnhancedModernExpenseScreenState
             double.tryParse(_splitPercentCtrls[uid]?.text ?? '0') ?? 0;
       }
       final remainder = (100 - sumPercentOthers).clamp(0, 100).toDouble();
+      final overPercent = sumPercentOthers > 100;
       if (auto != null) {
         _splitPercentCtrls[auto]!.text = remainder.toStringAsFixed(0);
       }
       // Build amounts
-      double running = 0;
       for (int i = 0; i < selected.length; i++) {
         final uid = selected[i];
         final pct = double.tryParse(_splitPercentCtrls[uid]?.text ?? '0') ?? 0;
         final raw = total * (pct / 100.0);
-        double value = i == selected.length - 1
-            ? (total - running)
-            : round2(raw);
-        if (i != selected.length - 1) running += value;
-        amounts[uid] = round2(value);
+        if (overPercent) {
+          // When invalid (>100%), avoid negative residuals; just show
+          // straightforward amounts without forcing residual on last.
+          amounts[uid] = round2(raw);
+        } else {
+          // Valid path: distribute rounding diff to last member only
+          // using running sum so final sum equals total.
+          // We'll compute running in a local closure scope
+        }
+      }
+      if (!overPercent) {
+        // recompute with running distribution to ensure sum==total
+        amounts.clear();
+        double running = 0;
+        for (int i = 0; i < selected.length; i++) {
+          final uid = selected[i];
+          final pct =
+              double.tryParse(_splitPercentCtrls[uid]?.text ?? '0') ?? 0;
+          final raw = total * (pct / 100.0);
+          double value = i == selected.length - 1
+              ? (total - running)
+              : round2(raw);
+          if (i != selected.length - 1) running += value;
+          amounts[uid] = round2(value);
+        }
       }
       return amounts;
     }
@@ -230,21 +250,36 @@ class _EnhancedModernExpenseScreenState
         sumOthers += double.tryParse(_splitExactCtrls[uid]?.text ?? '0') ?? 0;
       }
       final remainder = (total - sumOthers);
+      final overExact = sumOthers > total + 0.0001;
       if (auto != null) {
-        _splitExactCtrls[auto]!.text = remainder.isFinite
-            ? remainder.toStringAsFixed(2)
-            : '0.00';
+        final autoCtrl = _splitExactCtrls[auto]!;
+        if (overExact) {
+          // Don't allow negative remainder; keep auto at 0 when invalid
+          autoCtrl.text = '0.00';
+        } else {
+          autoCtrl.text = remainder.isFinite
+              ? remainder.toStringAsFixed(2)
+              : '0.00';
+        }
       }
-      // Build amounts
-      double running = 0;
-      for (int i = 0; i < selected.length; i++) {
-        final uid = selected[i];
-        final raw = double.tryParse(_splitExactCtrls[uid]?.text ?? '0') ?? 0;
-        double value = i == selected.length - 1
-            ? (total - running)
-            : round2(raw);
-        if (i != selected.length - 1) running += value;
-        amounts[uid] = round2(value);
+      // Build amounts: avoid negative by not forcing residual when invalid
+      if (overExact) {
+        for (int i = 0; i < selected.length; i++) {
+          final uid = selected[i];
+          final raw = double.tryParse(_splitExactCtrls[uid]?.text ?? '0') ?? 0;
+          amounts[uid] = round2(raw < 0 ? 0 : raw);
+        }
+      } else {
+        double running = 0;
+        for (int i = 0; i < selected.length; i++) {
+          final uid = selected[i];
+          final raw = double.tryParse(_splitExactCtrls[uid]?.text ?? '0') ?? 0;
+          double value = i == selected.length - 1
+              ? (total - running)
+              : round2(raw);
+          if (i != selected.length - 1) running += value;
+          amounts[uid] = round2(value);
+        }
       }
       return amounts;
     }
@@ -376,7 +411,29 @@ class _EnhancedModernExpenseScreenState
             readOnly: isAuto,
             keyboardType: const TextInputType.numberWithOptions(decimal: false),
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            onChanged: (_) => setState(() {}),
+            onChanged: (value) {
+              // Clamp so that non-auto members never exceed the remaining 100%
+              final ctrl = _splitPercentCtrls[uid]!;
+              int entered = int.tryParse(value) ?? 0;
+              // Sum of others excluding this uid and auto
+              final auto = _splitAutoUid;
+              int sumOthers = 0;
+              for (final x in _selectedMembers) {
+                if (x == uid || x == auto) continue;
+                sumOthers +=
+                    int.tryParse(_splitPercentCtrls[x]?.text ?? '0') ?? 0;
+              }
+              final allowed = 100 - sumOthers;
+              if (entered > allowed) {
+                entered = allowed.clamp(0, 100);
+                final newText = entered.toString();
+                ctrl.text = newText;
+                ctrl.selection = TextSelection.collapsed(
+                  offset: newText.length,
+                );
+              }
+              setState(() {});
+            },
             textAlign: TextAlign.center,
             decoration: dec(suffix: '%'),
           ),
@@ -860,6 +917,11 @@ class _EnhancedModernExpenseScreenState
       onTap: () {
         setState(() => _splitType = type);
         Navigator.pop(context);
+        // After selecting a non-equal type, show editors so user can input values immediately
+        if (type != 'equal') {
+          // Delay to allow the previous sheet to close cleanly
+          Future.microtask(() => _showSplitEditorsSheet());
+        }
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
@@ -903,6 +965,83 @@ class _EnhancedModernExpenseScreenState
                 color: Theme.of(context).colorScheme.primary,
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showSplitEditorsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (ctx, scrollController) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _splitType == 'percentage'
+                          ? Icons.percent
+                          : _splitType == 'shares'
+                          ? Icons.pie_chart
+                          : Icons.attach_money,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _splitType == 'percentage'
+                          ? 'Edit Percentage Split'
+                          : _splitType == 'shares'
+                          ? 'Edit Shares Split'
+                          : 'Edit Exact Amounts',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (_selectedMembers.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.orange),
+                    ),
+                    child: const Text(
+                      'Select members in "Split Among" first to edit amounts.',
+                      style: TextStyle(fontSize: 14),
+                    ),
+                  )
+                else
+                  _buildSplitEditorCard(),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.check_circle_outline),
+                    label: const Text('Done'),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1121,7 +1260,7 @@ class _EnhancedModernExpenseScreenState
 
             // Category
             DropdownButtonFormField<String>(
-              value: _category,
+              initialValue: _category,
               decoration: InputDecoration(
                 labelText: 'Category',
                 prefixIcon: const Icon(Icons.category_outlined),

@@ -23,6 +23,7 @@ dependencies:
   image_picker: ^1.0.4
   url_launcher: ^6.1.14
   cupertino_icons: ^1.0.8
+  file_picker: ^8.1.2
   
   # PDF and Excel export
   pdf: ^3.10.8

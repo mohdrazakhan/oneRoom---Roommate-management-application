@@ -84,6 +84,20 @@ service cloud.firestore {
         allow update, delete: if isMemberOfRoom(roomId);
       }
 
+      // Chats subcollection (room chat messages)
+      match /chats/{messageId} {
+        // Members can read and create chat messages
+        allow read: if isMemberOfRoom(roomId);
+        allow create: if isMemberOfRoom(roomId);
+
+        // Members can update chat messages (needed for poll voting, etc.)
+        // If you want stricter control, you can later restrict updates to specific fields.
+        allow update: if isMemberOfRoom(roomId);
+
+        // Prevent deletions for now (keeps chat history immutable)
+        allow delete: if false;
+      }
+
       // Immutable Activity/Audit Log subcollection
       // - Members of the room can read all audit events for transparency
       // - Only members can CREATE new entries (app writes on add/edit/delete)

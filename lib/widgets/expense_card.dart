@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../Models/expense.dart';
 import '../utils/formatters.dart';
+import '../services/firestore_service.dart';
 
 class ExpenseCard extends StatelessWidget {
   final Expense expense;
@@ -9,6 +10,8 @@ class ExpenseCard extends StatelessWidget {
   final String? currentUserUid;
   final VoidCallback? onTap;
   final VoidCallback? onDelete;
+
+  static final Map<String, String> _nameCache = {};
 
   const ExpenseCard({
     super.key,
@@ -22,11 +25,11 @@ class ExpenseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Expense model no longer carries paidByName; display uid or resolve name upstream
-    final paidByLabel = expense.paidBy;
+    final paidByUid = expense.paidBy;
     final dateText = Formatters.formatDateTime(expense.createdAt);
     final amountText = Formatters.formatCurrency(expense.amount);
 
-    final paidByMe = currentUserUid != null && currentUserUid == expense.paidBy;
+    final paidByMe = currentUserUid != null && currentUserUid == paidByUid;
     final category = ExpenseCategory.getCategory(expense.category);
 
     return Container(
@@ -109,22 +112,18 @@ class ExpenseCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 4),
                           Flexible(
-                            child: Text(
-                              paidByMe
-                                  ? 'You paid'
-                                  : 'Paid by: ${_shortUid(paidByLabel)}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: paidByMe
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Colors.grey[600],
-                                fontWeight: paidByMe
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            child: paidByMe
+                                ? Text(
+                                    'You paid',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  )
+                                : _PaidByName(uid: paidByUid),
                           ),
                         ],
                       ),
@@ -205,9 +204,55 @@ class ExpenseCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PaidByName extends StatefulWidget {
+  final String uid;
+  const _PaidByName({required this.uid});
+
+  @override
+  State<_PaidByName> createState() => _PaidByNameState();
+}
+
+class _PaidByNameState extends State<_PaidByName> {
+  String? _name;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Use cache if available
+    final cached = ExpenseCard._nameCache[widget.uid];
+    if (cached != null) {
+      _name = cached;
+      _loading = false;
+    } else {
+      FirestoreService().getUserDisplayName(widget.uid).then((value) {
+        if (!mounted) return;
+        setState(() {
+          _name = value ?? _shortUid(widget.uid);
+          ExpenseCard._nameCache[widget.uid] = _name!;
+          _loading = false;
+        });
+      });
+    }
+  }
 
   String _shortUid(String uid) {
     if (uid.length <= 12) return uid;
     return '${uid.substring(0, 6)}...${uid.substring(uid.length - 3)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = _loading
+        ? _shortUid(widget.uid)
+        : (_name ?? _shortUid(widget.uid));
+    return Text(
+      'Paid by: $text',
+      style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+      overflow: TextOverflow.ellipsis,
+      maxLines: 1,
+    );
   }
 }

@@ -42,11 +42,16 @@ class MyApp extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
         backgroundColor: Colors.transparent,
+        // Ensure icons and default foreground content are clearly visible on light backgrounds
         foregroundColor: lightColorScheme.onSurface,
-        titleTextStyle: const TextStyle(
+        // Explicitly set title color to avoid white titles on transparent app bars
+        titleTextStyle: TextStyle(
+          color: lightColorScheme.onSurface,
           fontSize: 20,
           fontWeight: FontWeight.bold,
         ),
+        iconTheme: IconThemeData(color: lightColorScheme.onSurface),
+        actionsIconTheme: IconThemeData(color: lightColorScheme.onSurface),
       ),
 
       // Card theme

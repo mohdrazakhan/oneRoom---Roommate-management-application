@@ -11,6 +11,7 @@ import '../profile/profile_screen.dart';
 import 'create_room_screen.dart';
 import 'join_room_screen.dart';
 import 'enhanced_room_settings_screen.dart';
+import '../chat/chat_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -559,6 +560,15 @@ class DashboardScreen extends StatelessWidget {
                     MaterialPageRoute(
                       builder: (_) =>
                           TasksHomeScreen(roomId: room.id, roomName: room.name),
+                    ),
+                  );
+                },
+                onChatTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ChatScreen(roomId: room.id, roomName: room.name),
                     ),
                   );
                 },

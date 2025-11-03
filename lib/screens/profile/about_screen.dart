@@ -91,19 +91,19 @@ class AboutScreen extends StatelessWidget {
             _buildContactItem(
               Icons.email_outlined,
               'Email',
-              'support@oneroom.app',
+              'mohdrazakhan32@gmail.com',
             ),
             _buildContactItem(
               Icons.language_rounded,
               'Website',
-              'www.oneroom.app',
+              'www.mohdrazakhan.me',
             ),
             const SizedBox(height: 24),
             const Divider(),
             const SizedBox(height: 16),
             const Center(
               child: Text(
-                '© 2024 One Room. All rights reserved.',
+                '© 2025 One Room. All rights reserved.',
                 style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
             ),

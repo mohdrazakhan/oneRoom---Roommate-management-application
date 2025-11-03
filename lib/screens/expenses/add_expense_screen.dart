@@ -240,7 +240,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
                     // Paid By
                     DropdownButtonFormField<String>(
-                      value: _paidByUid,
+                      initialValue: _paidByUid,
                       items: _members
                           .map(
                             (uid) => DropdownMenuItem(

@@ -128,6 +128,25 @@ class FirestoreService {
   CollectionReference expensesRef(String roomId) =>
       _rooms.doc(roomId).collection('expenses');
 
+  /// Resolve a user's display name by uid. Returns null if not found.
+  Future<String?> getUserDisplayName(String uid) async {
+    try {
+      final snap = await _users.doc(uid).get();
+      if (!snap.exists) return null;
+      final m = snap.data() as Map<String, dynamic>;
+      String? name = (m['displayName'] ?? m['name']) as String?;
+      if (name != null && name.trim().isNotEmpty) return name.trim();
+      // fallback to email local-part
+      final email = m['email'] as String?;
+      if (email != null && email.contains('@')) {
+        return email.split('@').first;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Stream list of expenses for a room. Each expense map includes 'id'.
   Stream<List<Map<String, dynamic>>> expensesForRoom(String roomId) {
     return expensesRef(roomId)

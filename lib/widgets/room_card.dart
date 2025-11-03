@@ -11,6 +11,7 @@ class RoomCard extends StatelessWidget {
   final Room room;
   final VoidCallback? onTap;
   final VoidCallback? onTasksTap;
+  final VoidCallback? onChatTap;
   final VoidCallback? onMorePressed;
 
   const RoomCard({
@@ -18,6 +19,7 @@ class RoomCard extends StatelessWidget {
     required this.room,
     this.onTap,
     this.onTasksTap,
+    this.onChatTap,
     this.onMorePressed,
   });
 
@@ -159,6 +161,16 @@ class RoomCard extends StatelessWidget {
                         icon: Icons.task_alt_rounded,
                         label: 'Tasks',
                         onPressed: onTasksTap,
+                        isPrimary: false,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildActionButton(
+                        context,
+                        icon: Icons.forum_rounded,
+                        label: 'Chat',
+                        onPressed: onChatTap,
                         isPrimary: false,
                       ),
                     ),
