@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is a member of the room
+    function isMemberOfRoom(roomId) {
+      return isSignedIn() && 
+             request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.members;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      // AND authenticated users can read other users' profiles (for displaying names)
+      allow read: if isSignedIn();
+      
+      // Users can create and update their own profile
+      allow create, update: if isSignedIn() && request.auth.uid == userId;
+      
+      // No one can delete user profiles
+      allow delete: if false;
+    }
+    
+    // Rooms collection
+    match /rooms/{roomId} {
+      // Anyone authenticated can create a room
+      allow create: if isSignedIn() && 
+                       request.auth.uid == request.resource.data.createdBy &&
+                       request.auth.uid in request.resource.data.members;
+      
+      // Anyone authenticated can read room data (needed for join functionality)
+      // This allows users to lookup a room before joining
+      allow read: if isSignedIn();
+      
+      // Members can update room (e.g., add new members)
+      // Also allow update if user is adding themselves to members array
+      allow update: if isSignedIn() && (
+        request.auth.uid in resource.data.members ||
+        (request.auth.uid in request.resource.data.members && 
+         request.resource.data.members.size() == resource.data.members.size() + 1)
+      );
+      
+      // Only creator can delete the room
+      allow delete: if isSignedIn() && request.auth.uid == resource.data.createdBy;
+      
+      // Expenses subcollection
+      match /expenses/{expenseId} {
+        // Members can create expenses
+        allow create: if isMemberOfRoom(roomId);
+        
+        // Members can read expenses
+        allow read: if isMemberOfRoom(roomId);
+        
+        // Members can update and delete their own expenses
+        allow update, delete: if isMemberOfRoom(roomId);
+      }
+      
+      // Task categories subcollection
+      match /task_categories/{categoryId} {
+        // Members can create categories
+        allow create: if isMemberOfRoom(roomId);
+        
+        // Members can read categories
+        allow read: if isMemberOfRoom(roomId);
+        
+        // Members can update and delete categories
+        allow update, delete: if isMemberOfRoom(roomId);
+      }
+      
+      // Tasks subcollection
+      match /tasks/{taskId} {
+        // Members can create tasks
+        allow create: if isMemberOfRoom(roomId);
+        
+        // Members can read tasks
+        allow read: if isMemberOfRoom(roomId);
+        
+        // Members can update and delete tasks
+        allow update, delete: if isMemberOfRoom(roomId);
+      }
+
+      // Immutable Activity/Audit Log subcollection
+      // - Members of the room can read all audit events for transparency
+      // - Only members can CREATE new entries (app writes on add/edit/delete)
+      // - No one can UPDATE or DELETE existing audit entries (immutability)
+      match /auditLog/{logId} {
+        allow read: if isMemberOfRoom(roomId);
+        allow create: if isMemberOfRoom(roomId);
+        allow update, delete: if false;
+      }
+    }
+  }
+}

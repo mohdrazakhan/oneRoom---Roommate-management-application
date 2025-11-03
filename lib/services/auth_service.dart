@@ -8,31 +8,35 @@ import 'package:flutter/foundation.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
 
   Future<User?> signInWithGoogle() async {
     try {
-      // Use the package singleton to authenticate the user.
-      final GoogleSignInAccount googleUser = await GoogleSignIn.instance
-          .authenticate();
-      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
-      if (googleAuth.idToken != null) {
-        // The current google_sign_in token object only provides an idToken.
-        // Pass idToken to Firebase credential; accessToken is not available here.
-        final credential = GoogleAuthProvider.credential(
-          idToken: googleAuth.idToken,
-        );
-        UserCredential userCredential = await _auth.signInWithCredential(
-          credential,
-        );
-        return userCredential.user;
+      final googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        return null;
       }
+
+      final googleAuth = await googleUser.authentication;
+      if (googleAuth.idToken == null && googleAuth.accessToken == null) {
+        throw FirebaseAuthException(
+          code: 'missing-google-auth-token',
+          message: 'Missing Google ID or access token.',
+        );
+      }
+      final credential = GoogleAuthProvider.credential(
+        idToken: googleAuth.idToken,
+        accessToken: googleAuth.accessToken,
+      );
+
+      final userCredential = await _auth.signInWithCredential(credential);
+      return userCredential.user;
     } on FirebaseAuthException {
       rethrow;
     } catch (e) {
       debugPrint(e.toString());
       rethrow;
     }
-    return null;
   }
 
   Future<User?> signInWithEmailAndPassword(
@@ -69,9 +73,9 @@ class AuthService {
     // Sign out from Firebase and Google (if used)
     await _auth.signOut();
     try {
-      await GoogleSignIn.instance.signOut();
+      await _googleSignIn.signOut();
     } catch (_) {
-      // ignore
+      // ignore sign-out failures from Google
     }
   }
 }
