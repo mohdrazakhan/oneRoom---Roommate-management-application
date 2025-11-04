@@ -126,20 +126,87 @@ class ExpenseDetailScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Paid by
-          FutureBuilder<String>(
-            future: _getUserName(firestoreService, expense.paidBy),
-            builder: (context, snapshot) {
-              final paidByName = snapshot.data ?? 'Loading...';
-              return _buildInfoRow(
-                context,
-                'Paid by',
-                paidByName,
-                Icons.person,
-              );
-            },
-          ),
-          const SizedBox(height: 16),
+          // Payers (multi-payer aware)
+          ...(() {
+            final payers = expense.effectivePayers();
+
+            // Debug: Check if we have multi-payer data
+            print(
+              '🔍 Expense ${expense.id}: payers field = ${expense.payers}, effectivePayers = $payers',
+            );
+
+            if (payers.length <= 1) {
+              return [
+                FutureBuilder<String>(
+                  future: _getUserName(firestoreService, expense.paidBy),
+                  builder: (context, snapshot) {
+                    final paidByName = snapshot.data ?? 'Loading...';
+                    return _buildInfoRow(
+                      context,
+                      'Paid By',
+                      paidByName,
+                      Icons.person,
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ];
+            }
+
+            // Show full contributor list
+            return [
+              Row(
+                children: [
+                  const Icon(Icons.people, color: Colors.grey),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Payers',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  side: BorderSide(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: payers.entries.map((entry) {
+                    final uid = entry.key;
+                    final amount = entry.value;
+                    return FutureBuilder<String>(
+                      future: _getUserName(firestoreService, uid),
+                      builder: (context, snapshot) {
+                        final name = snapshot.data ?? 'Loading...';
+                        return ListTile(
+                          leading: CircleAvatar(
+                            child: Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            ),
+                          ),
+                          title: Text(name),
+                          trailing: Text(
+                            '₹${amount.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.green,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ];
+          })(),
 
           // Date
           _buildInfoRow(

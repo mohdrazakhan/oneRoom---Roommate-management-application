@@ -98,6 +98,21 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Payments subcollection (cash settlements between members)
+      match /payments/{paymentId} {
+        // Members can create payment records
+        allow create: if isMemberOfRoom(roomId);
+        
+        // Members can read payment history
+        allow read: if isMemberOfRoom(roomId);
+        
+        // Members can delete payments (in case of mistakes)
+        allow delete: if isMemberOfRoom(roomId);
+        
+        // Prevent updates to maintain payment integrity
+        allow update: if false;
+      }
+
       // Immutable Activity/Audit Log subcollection
       // - Members of the room can read all audit events for transparency
       // - Only members can CREATE new entries (app writes on add/edit/delete)

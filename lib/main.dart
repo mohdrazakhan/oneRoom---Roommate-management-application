@@ -8,7 +8,7 @@ import 'providers/auth_provider.dart';
 import 'providers/rooms_provider.dart';
 import 'providers/tasks_provider.dart';
 import 'services/firestore_service.dart';
-import 'services/user_profile_fixer.dart';
+// import 'services/user_profile_fixer.dart'; // Unused - only needed if running profile fix
 import 'app.dart'; // contains MyApp + AuthWrapper + routes
 
 Future<void> main() async {
@@ -16,22 +16,6 @@ Future<void> main() async {
 
   // Initialize Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  // Fix user profiles with missing displayNames
-  try {
-    final fixer = UserProfileFixer();
-    print('🔧 Starting automatic user profile fix...');
-
-    // Fix current user first
-    await fixer.fixCurrentUserProfile();
-
-    // Fix all room members automatically
-    await fixer.fixAllRoomMembers();
-
-    print('✅ Automatic profile fix completed!');
-  } catch (e) {
-    print('⚠️ Error fixing user profiles: $e');
-  }
 
   runApp(const RootApp());
 }

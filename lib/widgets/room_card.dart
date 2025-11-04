@@ -30,178 +30,189 @@ class RoomCard extends StatelessWidget {
         ? Formatters.formatDateTime(room.createdAt!)
         : '—';
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white,
-            Theme.of(context).colorScheme.primary.withValues(alpha: 0.03),
-          ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Responsive padding and margins
+        final horizontalMargin = constraints.maxWidth < 360 ? 12.0 : 16.0;
+        final cardPadding = constraints.maxWidth < 360 ? 12.0 : 16.0;
+
+        return Container(
+          margin: EdgeInsets.symmetric(
+            horizontal: horizontalMargin,
+            vertical: 8,
           ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    // Modern gradient avatar
-                    Container(
-                      width: 60,
-                      height: 60,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Theme.of(context).colorScheme.primary,
-                            Theme.of(context).colorScheme.secondary,
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withValues(alpha: 0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          _initials(room.name),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 24,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // Title and subtitle
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            room.name,
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Created $dateText',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // Info chips
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _buildInfoChip(
-                      context,
-                      Icons.people_rounded,
-                      '$membersCount member${membersCount == 1 ? '' : 's'}',
-                    ),
-                    _buildInfoChip(
-                      context,
-                      Icons.account_balance_wallet_rounded,
-                      'Expenses',
-                    ),
-                    // My balance chip (you owe / you get) for this room
-                    _MyBalanceChip(roomId: room.id),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Action buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildActionButton(
-                        context,
-                        icon: Icons.receipt_long_rounded,
-                        label: 'Expenses',
-                        onPressed: onTap,
-                        isPrimary: true,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildActionButton(
-                        context,
-                        icon: Icons.task_alt_rounded,
-                        label: 'Tasks',
-                        onPressed: onTasksTap,
-                        isPrimary: false,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildActionButton(
-                        context,
-                        icon: Icons.forum_rounded,
-                        label: 'Chat',
-                        onPressed: onChatTap,
-                        isPrimary: false,
-                      ),
-                    ),
-                    if (onMorePressed != null) ...[
-                      const SizedBox(width: 8),
-                      Material(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                        child: InkWell(
-                          onTap: onMorePressed,
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            child: Icon(
-                              Icons.settings_rounded,
-                              size: 20,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white,
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.03),
               ],
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.1),
+                blurRadius: 15,
+                offset: const Offset(0, 5),
+              ),
+            ],
           ),
-        ),
-      ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: onTap,
+              child: Padding(
+                padding: EdgeInsets.all(cardPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        // Modern gradient avatar
+                        Container(
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).colorScheme.primary,
+                                Theme.of(context).colorScheme.secondary,
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: Text(
+                              _initials(room.name),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 24,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        // Title and subtitle
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                room.name,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Created $dateText',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Info chips
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildInfoChip(
+                          context,
+                          Icons.people_rounded,
+                          '$membersCount member${membersCount == 1 ? '' : 's'}',
+                        ),
+                        _buildInfoChip(
+                          context,
+                          Icons.account_balance_wallet_rounded,
+                          'Expenses',
+                        ),
+                        // My balance chip (you owe / you get) for this room
+                        _MyBalanceChip(roomId: room.id),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Action buttons - Responsive
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        // Adapt to screen width
+                        final isSmallScreen = constraints.maxWidth < 320;
+                        final spacing = isSmallScreen ? 6.0 : 8.0;
+
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: _buildActionButton(
+                                context,
+                                icon: Icons.receipt_long_rounded,
+                                label: isSmallScreen ? 'Exp' : 'Expenses',
+                                onPressed: onTap,
+                                isPrimary: true,
+                                compact: isSmallScreen,
+                              ),
+                            ),
+                            SizedBox(width: spacing),
+                            Expanded(
+                              child: _buildActionButton(
+                                context,
+                                icon: Icons.task_alt_rounded,
+                                label: 'Tasks',
+                                onPressed: onTasksTap,
+                                isPrimary: false,
+                                compact: isSmallScreen,
+                              ),
+                            ),
+                            SizedBox(width: spacing),
+                            Expanded(
+                              child: _buildActionButton(
+                                context,
+                                icon: Icons.forum_rounded,
+                                label: 'Chat',
+                                onPressed: onChatTap,
+                                isPrimary: false,
+                                compact: isSmallScreen,
+                              ),
+                            ),
+                            if (onMorePressed != null) ...[
+                              SizedBox(width: spacing),
+                              _buildIconOnlyButton(
+                                context,
+                                icon: Icons.settings_rounded,
+                                onPressed: onMorePressed,
+                              ),
+                            ],
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -236,6 +247,7 @@ class RoomCard extends StatelessWidget {
     required String label,
     required VoidCallback? onPressed,
     required bool isPrimary,
+    bool compact = false,
   }) {
     return Material(
       color: isPrimary
@@ -246,29 +258,60 @@ class RoomCard extends StatelessWidget {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: EdgeInsets.symmetric(
+            vertical: compact ? 10 : 12,
+            horizontal: compact ? 4 : 8,
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 icon,
-                size: 20,
+                size: compact ? 18 : 20,
                 color: isPrimary
                     ? Colors.white
                     : Theme.of(context).colorScheme.primary,
               ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                  color: isPrimary
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.primary,
+              SizedBox(width: compact ? 4 : 6),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: compact ? 12 : 13,
+                    color: isPrimary
+                        ? Colors.white
+                        : Theme.of(context).colorScheme.primary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIconOnlyButton(
+    BuildContext context, {
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return Material(
+      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          child: Icon(
+            icon,
+            size: 20,
+            color: Theme.of(context).colorScheme.primary,
           ),
         ),
       ),

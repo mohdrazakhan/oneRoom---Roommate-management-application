@@ -32,6 +32,9 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
   Map<String, TextEditingController> _customAmountControllers = {};
   File? _receiptImage;
   bool _isLoading = false;
+  // Multi-payer support
+  Map<String, double> _payers = {}; // uid -> contributed amount
+  Map<String, TextEditingController> _payerControllers = {};
 
   @override
   void initState() {
@@ -44,6 +47,14 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
       _notesController.text = widget.expense!.notes ?? '';
       _selectedCategory = widget.expense!.category;
       _selectedMembers = Set.from(widget.expense!.splitAmong);
+      // Seed payers from existing expense if available
+      final existingPayers = widget.expense!.payers;
+      if (existingPayers != null && existingPayers.isNotEmpty) {
+        _payers = Map.of(existingPayers);
+      } else {
+        // Fallback single payer
+        _payers = {widget.expense!.paidBy: widget.expense!.amount};
+      }
     }
   }
 
@@ -56,7 +67,11 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
 
     if (room != null) {
       setState(() {
-        _roomMembers = List<String>.from(room['memberUids'] ?? []);
+        final listA = room['memberUids'];
+        final listB = room['members'];
+        _roomMembers = listA is List
+            ? List<String>.from(listA)
+            : (listB is List ? List<String>.from(listB) : <String>[]);
         if (widget.expense == null) {
           // Default: select all members
           _selectedMembers = Set.from(_roomMembers);
@@ -73,6 +88,7 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
     _customAmountControllers.values.forEach(
       (controller) => controller.dispose(),
     );
+    _payerControllers.values.forEach((c) => c.dispose());
     super.dispose();
   }
 
@@ -179,6 +195,68 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
                       ),
                       const SizedBox(height: 16),
 
+                      // Who paid (multi-payer)
+                      Card(
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(color: Colors.grey[300]!),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.only(top: 2.0),
+                                child: Icon(Icons.account_circle_outlined),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        const Text(
+                                          'Who paid?',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: _openPayersDialog,
+                                          child: const Text('Edit'),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    FutureBuilder<String>(
+                                      future: _payersSummary(),
+                                      builder: (context, snapshot) {
+                                        final text =
+                                            snapshot.data ??
+                                            'Tap Edit to choose who paid';
+                                        return Text(
+                                          text,
+                                          style: TextStyle(
+                                            color: Colors.grey[700],
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
                       // Category
                       const Text(
                         'Category',
@@ -191,21 +269,38 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: ExpenseCategory.categories.map((cat) {
-                          final isSelected = _selectedCategory == cat.name;
-                          return ChoiceChip(
-                            label: Text('${cat.icon} ${cat.name}'),
-                            selected: isSelected,
+                        children: [
+                          ...ExpenseCategory.categories.map((cat) {
+                            final isSelected = _selectedCategory == cat.name;
+                            return ChoiceChip(
+                              label: Text('${cat.icon} ${cat.name}'),
+                              selected: isSelected,
+                              onSelected: (selected) {
+                                setState(() {
+                                  _selectedCategory = cat.name;
+                                });
+                              },
+                              selectedColor: Color(
+                                cat.colorValue,
+                              ).withOpacity(0.3),
+                            );
+                          }),
+                          // Add custom category chip
+                          ChoiceChip(
+                            label: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.add_circle_outline, size: 16),
+                                SizedBox(width: 4),
+                                Text('Custom'),
+                              ],
+                            ),
+                            selected: false,
                             onSelected: (selected) {
-                              setState(() {
-                                _selectedCategory = cat.name;
-                              });
+                              _showCreateCustomCategoryDialog();
                             },
-                            selectedColor: Color(
-                              cat.colorValue,
-                            ).withOpacity(0.3),
-                          );
-                        }).toList(),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 24),
 
@@ -471,6 +566,226 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
     }
   }
 
+  Future<String> _payersSummary() async {
+    if (_payers.isEmpty) return 'Tap Edit to choose who paid';
+    if (_payers.length == 1) {
+      final uid = _payers.keys.first;
+      final name = await _getUserName(uid);
+      final amt = _payers.values.first;
+      return 'Paid by $name (₹${amt.toStringAsFixed(0)})';
+    }
+    final sorted = _payers.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final top = sorted.take(2).toList();
+    final othersCount = _payers.length - top.length;
+    final names = await Future.wait(
+      top.map((e) async {
+        final name = await _getUserName(e.key);
+        return '$name (₹${e.value.toStringAsFixed(0)})';
+      }),
+    );
+    final base = names.join(', ');
+    return othersCount > 0 ? '$base + $othersCount more' : base;
+  }
+
+  Future<void> _openPayersDialog() async {
+    final amountText = _amountController.text.trim();
+    final total = double.tryParse(amountText);
+    if (total == null || total <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid total amount first')),
+      );
+      return;
+    }
+
+    final current = FirebaseAuth.instance.currentUser!;
+    final uids = _roomMembers.isNotEmpty ? _roomMembers : [current.uid];
+    // Initialize controllers with current values
+    for (final uid in uids) {
+      final initial =
+          _payers[uid] ?? (uid == current.uid && _payers.isEmpty ? total : 0.0);
+      _payerControllers.putIfAbsent(uid, () => TextEditingController());
+      _payerControllers[uid]!.text = initial == 0.0
+          ? ''
+          : initial.toStringAsFixed(2);
+    }
+
+    String? error;
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Who paid?'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: Text(
+                          error!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    SizedBox(
+                      height: 300,
+                      child: ListView(
+                        children: uids.map((uid) {
+                          return FutureBuilder<String>(
+                            future: _getUserName(uid),
+                            builder: (context, snapshot) {
+                              final name = snapshot.data ?? 'Loading...';
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 6.0,
+                                ),
+                                child: TextField(
+                                  controller: _payerControllers[uid],
+                                  decoration: InputDecoration(
+                                    labelText: name,
+                                    prefixIcon: const Icon(
+                                      Icons.currency_rupee,
+                                    ),
+                                    border: const OutlineInputBorder(),
+                                  ),
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r'^\\d+\.?\\d{0,2}'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final Map<String, double> next = {};
+                    for (final uid in uids) {
+                      final raw = _payerControllers[uid]?.text.trim() ?? '';
+                      final v = double.tryParse(raw) ?? 0.0;
+                      if (v > 0) next[uid] = v;
+                    }
+                    final sum = next.values.fold<double>(0, (s, v) => s + v);
+                    if ((sum - total).abs() > 0.01) {
+                      setStateDialog(() {
+                        error =
+                            'Contributions must total ₹${total.toStringAsFixed(2)} (now ₹${sum.toStringAsFixed(2)})';
+                      });
+                      return;
+                    }
+                    if (next.isEmpty) {
+                      setStateDialog(() {
+                        error = 'Enter at least one payer';
+                      });
+                      return;
+                    }
+                    setState(() {
+                      _payers = next;
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _showCreateCustomCategoryDialog() async {
+    final nameController = TextEditingController();
+    final emojiController = TextEditingController(text: '🏷️');
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create Custom Category'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Category Name',
+                hintText: 'e.g., Pet Care, Gifts, etc.',
+                border: OutlineInputBorder(),
+              ),
+              textCapitalization: TextCapitalization.words,
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: emojiController,
+              decoration: const InputDecoration(
+                labelText: 'Emoji Icon',
+                hintText: 'Choose an emoji',
+                border: OutlineInputBorder(),
+              ),
+              maxLength: 2,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Tip: Long press keyboard emoji button or type emoji',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              final emoji = emojiController.text.trim();
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a category name')),
+                );
+                return;
+              }
+              Navigator.pop(context, {
+                'name': name,
+                'emoji': emoji.isEmpty ? '🏷️' : emoji,
+              });
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _selectedCategory = result['name']!;
+      });
+    }
+  }
+
   Future<void> _saveExpense() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -495,6 +810,27 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
       final currentUser = FirebaseAuth.instance.currentUser!;
 
       final amount = double.parse(_amountController.text);
+
+      // Default or validate payers (multi-payer)
+      if (_payers.isEmpty) {
+        final me = currentUser.uid;
+        _payers = {me: amount};
+      }
+      final payersTotal = _payers.values.fold<double>(0, (s, v) => s + v);
+      if ((payersTotal - amount).abs() > 0.01) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Payer contributions (₹${payersTotal.toStringAsFixed(2)}) must equal total amount (₹${amount.toStringAsFixed(2)})',
+            ),
+          ),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
 
       // Calculate splits
       Map<String, double> splits = {};
@@ -540,13 +876,19 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
         );
       }
 
+      // Determine primary payer (largest contribution) for compatibility
+      final String primaryPayer = _payers.entries.isNotEmpty
+          ? (_payers.entries.reduce((a, b) => a.value >= b.value ? a : b).key)
+          : currentUser.uid;
+
       if (widget.expense == null) {
         // Add new expense
         await firestoreService.addExpense(
           roomId: widget.roomId,
           description: _descriptionController.text.trim(),
           amount: amount,
-          paidBy: currentUser.uid,
+          paidBy: primaryPayer,
+          payers: Map.of(_payers),
           category: _selectedCategory,
           splitAmong: _selectedMembers.toList(),
           splits: splits,
@@ -562,6 +904,8 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
           expenseId: widget.expense!.id,
           description: _descriptionController.text.trim(),
           amount: amount,
+          paidBy: primaryPayer,
+          payers: Map.of(_payers),
           category: _selectedCategory,
           splitAmong: _selectedMembers.toList(),
           splits: splits,

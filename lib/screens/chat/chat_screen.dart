@@ -9,8 +9,11 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../Models/chat_message.dart';
+import '../../Models/expense.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/chat_service.dart';
+import '../../services/firestore_service.dart';
+import '../expenses/expense_detail_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String roomId;
@@ -229,12 +232,38 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _handleOpenLink(String type, String id) async {
-    // TODO: Implement deep navigation to expense/task detail if available.
-    // For now, just show a snackbar.
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Open $type: $id')));
+    if (type == 'expense') {
+      // Fetch expense data and navigate to detail screen
+      final firestore = FirestoreService();
+      final expMap = await firestore.getExpense(widget.roomId, id);
+      if (expMap != null) {
+        final expense = Expense.fromDoc(
+          // Simulate a DocumentSnapshot for fromDoc
+          _FakeDoc(id, expMap),
+        );
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                ExpenseDetailScreen(roomId: widget.roomId, expense: expense),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Expense not found.')));
+      }
+    } else if (type == 'task') {
+      // TODO: Implement navigation to TaskDetailScreen if available
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Open task: $id (not yet implemented)')),
+      );
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unknown link type: $type')));
+    }
   }
 
   Future<void> _showMoreActions() async {
@@ -527,25 +556,11 @@ class _Composer extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           children: [
+            // Single Attachment Button with Menu
             IconButton(
-              icon: const Icon(Icons.image_rounded),
-              onPressed: sending ? null : onPickImage,
-              tooltip: 'Image',
-            ),
-            IconButton(
-              icon: const Icon(Icons.videocam_rounded),
-              onPressed: sending ? null : onPickVideo,
-              tooltip: 'Video',
-            ),
-            IconButton(
-              icon: const Icon(Icons.audiotrack_rounded),
-              onPressed: sending ? null : onPickAudio,
-              tooltip: 'Audio',
-            ),
-            IconButton(
-              icon: const Icon(Icons.add_circle_outline_rounded),
-              onPressed: sending ? null : onMore,
-              tooltip: 'More',
+              icon: const Icon(Icons.attach_file_rounded),
+              onPressed: sending ? null : () => _showAttachmentMenu(context),
+              tooltip: 'Attach',
             ),
             Expanded(
               child: TextField(
@@ -566,6 +581,70 @@ class _Composer extends StatelessWidget {
       ),
     );
   }
+
+  void _showAttachmentMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(
+                  Icons.image_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                title: const Text('Image'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onPickImage();
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.videocam_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                title: const Text('Video'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onPickVideo();
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.audiotrack_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                title: const Text('Audio'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onPickAudio();
+                },
+              ),
+              const Divider(),
+              ListTile(
+                leading: Icon(
+                  Icons.poll_rounded,
+                  color: Theme.of(context).colorScheme.secondary,
+                ),
+                title: const Text('More Options'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onMore();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ChatMessageTile extends StatelessWidget {
@@ -574,6 +653,83 @@ class _ChatMessageTile extends StatelessWidget {
   final void Function(int optionIndex)? onVote;
   final void Function(String type, String id)? onOpenLink;
   const _ChatMessageTile({
+    required this.message,
+    required this.isMe,
+    this.onVote,
+    this.onOpenLink,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: isMe ? null : FirestoreService().getUserProfile(message.senderId),
+      builder: (context, snapshot) {
+        final senderName =
+            snapshot.data?['displayName'] as String? ?? 'Unknown';
+        final senderPhoto = snapshot.data?['photoURL'] as String?;
+
+        return Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Column(
+            crossAxisAlignment: isMe
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
+            children: [
+              // Show sender info for messages from others
+              if (!isMe)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, bottom: 4, top: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (senderPhoto != null && senderPhoto.isNotEmpty)
+                        CircleAvatar(
+                          radius: 10,
+                          backgroundImage: NetworkImage(senderPhoto),
+                        )
+                      else
+                        CircleAvatar(
+                          radius: 10,
+                          child: Text(
+                            senderName.isNotEmpty
+                                ? senderName[0].toUpperCase()
+                                : '?',
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                        ),
+                      const SizedBox(width: 6),
+                      Text(
+                        senderName,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              _MessageBubble(
+                message: message,
+                isMe: isMe,
+                onVote: onVote,
+                onOpenLink: onOpenLink,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final ChatMessage message;
+  final bool isMe;
+  final void Function(int optionIndex)? onVote;
+  final void Function(String type, String id)? onOpenLink;
+
+  const _MessageBubble({
     required this.message,
     required this.isMe,
     this.onVote,
@@ -910,4 +1066,16 @@ class _LinkPicker extends StatelessWidget {
     if (a == null) return '';
     return 'Amount: ${a.toStringAsFixed(2)}';
   }
+}
+
+// Helper class to simulate a DocumentSnapshot for Expense.fromDoc
+class _FakeDoc implements DocumentSnapshot {
+  @override
+  final String id;
+  final Map<String, dynamic> _data;
+  _FakeDoc(this.id, this._data);
+  @override
+  Map<String, dynamic>? data() => _data;
+  // ...existing code for other members throws UnimplementedError
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

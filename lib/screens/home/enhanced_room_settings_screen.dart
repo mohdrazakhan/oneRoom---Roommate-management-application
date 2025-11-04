@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:flutter/services.dart';
 import '../../Models/room.dart';
 import '../../services/firestore_service.dart';
 import '../../services/expense_export_service.dart';
@@ -474,6 +477,11 @@ class _EnhancedRoomSettingsScreenState
 
             const SizedBox(height: 24),
 
+            // Invite Section with QR code and sharing
+            _buildInviteSection(context),
+
+            const SizedBox(height: 24),
+
             // Total Expenditure Card
             _buildExpenditureCard(context),
 
@@ -494,8 +502,11 @@ class _EnhancedRoomSettingsScreenState
 
             const SizedBox(height: 24),
 
-            // Leave Room Button
+            // Leave Room Button (for non-creators)
             if (!isCreator) _buildLeaveRoomButton(context),
+
+            // Delete Room Button (for creators only)
+            if (isCreator) _buildDeleteRoomButton(context),
 
             const SizedBox(height: 40),
           ],
@@ -980,6 +991,232 @@ class _EnhancedRoomSettingsScreenState
           'Leave Room',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDeleteRoomButton(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: ElevatedButton.icon(
+        onPressed: _deleteRoom,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.red[700],
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        icon: const Icon(Icons.delete_forever),
+        label: const Text(
+          'Delete Room',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteRoom() async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    // Verify user is the creator
+    if (widget.room.createdBy != currentUserId) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Only the room creator can delete the room.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Room'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to delete "${widget.room.name}"?',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '⚠️ This action cannot be undone!',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'All expenses, tasks, and room data will be permanently deleted for all members.',
+              style: TextStyle(fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.red[700],
+            ),
+            child: const Text('Delete Permanently'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        // Show loading dialog
+        if (mounted) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) =>
+                const Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        // Delete the room
+        await _firestoreService.deleteRoom(widget.room.id);
+
+        if (mounted) {
+          // Close loading dialog
+          Navigator.of(context).pop();
+
+          // Navigate back to dashboard
+          Navigator.of(context).popUntil((route) => route.isFirst);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Room deleted successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          // Close loading dialog
+          Navigator.of(context).pop();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error deleting room: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Widget _buildInviteSection(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.person_add_rounded,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Invite Roommates',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: QrImageView(
+              data: widget.room.id,
+              version: QrVersions.auto,
+              size: 120,
+              backgroundColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Text(
+              widget.room.id,
+              style: const TextStyle(
+                fontSize: 16,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.content_copy_rounded),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: widget.room.id));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Room code copied to clipboard!'),
+                      backgroundColor: Colors.green,
+                      behavior: SnackBarBehavior.floating,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                color: Theme.of(context).colorScheme.primary,
+                tooltip: 'Copy code',
+              ),
+              IconButton(
+                icon: const Icon(Icons.share_rounded),
+                onPressed: () {
+                  final message =
+                      'Join my room "${widget.room.name}" on One Room app!\n\n'
+                      'Room Code: ${widget.room.id}\n\n'
+                      'Use this code to join and sync all our tasks and expenses.';
+                  Share.share(message, subject: 'Join my One Room group!');
+                },
+                color: Theme.of(context).colorScheme.primary,
+                tooltip: 'Share code',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Scan the QR code or use the room code to join and sync all data.',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: 14,
+              height: 1.5,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }

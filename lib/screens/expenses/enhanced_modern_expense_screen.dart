@@ -118,19 +118,16 @@ class _EnhancedModernExpenseScreenState
     _category = e.category;
     _selectedMembers = [...e.splitAmong];
 
-    // Initialize paidBy map: In edit mode, use existing paidBy (single payer from model)
-    // The Expense model has a single paidBy uid. We'll create a controller for that uid.
+    // Initialize paidBy map: use existing multi-payer data or fall back to single paidBy
     _paidBy.clear();
     if (_members.isNotEmpty) {
-      // Set the original payer to the full amount
-      _paidBy[e.paidBy] = TextEditingController(
-        text: e.amount.toStringAsFixed(2),
-      );
-      // Initialize other members with 0
+      final existingPayers = e
+          .effectivePayers(); // uses payers map or fallback to {paidBy: amount}
       for (var uid in _members) {
-        if (uid != e.paidBy) {
-          _paidBy[uid] = TextEditingController(text: '0.00');
-        }
+        final paidAmount = existingPayers[uid] ?? 0.0;
+        _paidBy[uid] = TextEditingController(
+          text: paidAmount == 0.0 ? '0.00' : paidAmount.toStringAsFixed(2),
+        );
       }
     }
 
@@ -1050,6 +1047,77 @@ class _EnhancedModernExpenseScreenState
   // _pickReceipt removed: unused in this screen. If you want receipt picking
   // re-enabled later, we can add it back and wire the UI.
 
+  Future<void> _showCreateCustomCategoryDialog() async {
+    final nameController = TextEditingController();
+    final emojiController = TextEditingController(text: '🏷️');
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create Custom Category'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Category Name',
+                hintText: 'e.g., Pet Care, Gifts, etc.',
+                border: OutlineInputBorder(),
+              ),
+              textCapitalization: TextCapitalization.words,
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: emojiController,
+              decoration: const InputDecoration(
+                labelText: 'Emoji Icon',
+                hintText: 'Choose an emoji',
+                border: OutlineInputBorder(),
+              ),
+              maxLength: 2,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Tip: Long press the emoji keyboard button to access emoji picker',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              final emoji = emojiController.text.trim();
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a category name')),
+                );
+                return;
+              }
+              Navigator.pop(context, {
+                'name': name,
+                'emoji': emoji.isEmpty ? '🏷️' : emoji,
+              });
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _category = result['name']!;
+      });
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -1072,11 +1140,13 @@ class _EnhancedModernExpenseScreenState
       return;
     }
 
-    // Find primary payer (the one who paid the most)
+    // Build payers map from the UI controls and find primary payer
+    final Map<String, double> payers = {};
     String primaryPayer = _members.first;
     double maxPaid = 0.0;
     for (var uid in _members) {
       final paid = double.tryParse(_paidBy[uid]?.text ?? '0') ?? 0.0;
+      if (paid > 0) payers[uid] = paid;
       if (paid > maxPaid) {
         maxPaid = paid;
         primaryPayer = uid;
@@ -1092,6 +1162,13 @@ class _EnhancedModernExpenseScreenState
 
       // Calculate splits from selected type
       final splits = _calcSplitAmounts();
+
+      // Validate that sum(payers) equals total amount (within 1 cent tolerance)
+      final totalPaid = payers.values.fold<double>(0.0, (p, c) => p + c);
+      final amountDiff = (totalPaid - amount).abs();
+      if (payers.isNotEmpty && amountDiff > 0.01) {
+        throw 'Who Paid total (₹${totalPaid.toStringAsFixed(2)}) must equal Total (₹${amount.toStringAsFixed(2)})';
+      }
 
       if (_isEditing) {
         // Track changes for audit
@@ -1134,6 +1211,7 @@ class _EnhancedModernExpenseScreenState
           description: description,
           amount: amount,
           paidBy: primaryPayer,
+          payers: payers.isNotEmpty ? payers : null,
           category: _category,
           splitAmong: _selectedMembers,
           splits: splits,
@@ -1151,6 +1229,7 @@ class _EnhancedModernExpenseScreenState
           description: description,
           amount: amount,
           paidBy: primaryPayer,
+          payers: payers.isNotEmpty ? payers : null,
           category: _category,
           splitAmong: _selectedMembers,
           splits: splits,
@@ -1270,21 +1349,41 @@ class _EnhancedModernExpenseScreenState
                 filled: true,
                 fillColor: Colors.white,
               ),
-              items: ExpenseCategory.categories
-                  .map(
-                    (cat) => DropdownMenuItem(
-                      value: cat.name,
-                      child: Row(
-                        children: [
-                          Text(cat.icon, style: const TextStyle(fontSize: 20)),
-                          const SizedBox(width: 8),
-                          Text(cat.name),
-                        ],
-                      ),
+              items: [
+                ...ExpenseCategory.categories.map(
+                  (cat) => DropdownMenuItem(
+                    value: cat.name,
+                    child: Row(
+                      children: [
+                        Text(cat.icon, style: const TextStyle(fontSize: 20)),
+                        const SizedBox(width: 8),
+                        Text(cat.name),
+                      ],
                     ),
-                  )
-                  .toList(),
-              onChanged: (val) => setState(() => _category = val!),
+                  ),
+                ),
+                // Add "Custom" option
+                const DropdownMenuItem(
+                  value: '__CREATE_CUSTOM__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_circle_outline, size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Create Custom Category...',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              onChanged: (val) {
+                if (val == '__CREATE_CUSTOM__') {
+                  _showCreateCustomCategoryDialog();
+                } else {
+                  setState(() => _category = val!);
+                }
+              },
             ),
             const SizedBox(height: 16),
 

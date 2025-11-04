@@ -168,37 +168,102 @@ class DashboardScreen extends StatelessWidget {
           ),
         ),
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'join',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const JoinRoomScreen()),
-              );
-            },
-            icon: const Icon(Icons.group_add_rounded),
-            label: const Text('Join Room'),
-            backgroundColor: Theme.of(context).colorScheme.secondary,
-            elevation: 4,
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.extended(
-            heroTag: 'create',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CreateRoomScreen()),
-              );
-            },
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('New Room'),
-            elevation: 8,
-          ),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          _showRoomOptionsMenu(context);
+        },
+        child: const Icon(Icons.add_rounded, size: 28),
+        elevation: 8,
       ),
+    );
+  }
+
+  void _showRoomOptionsMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.add_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                title: const Text(
+                  'Create New Room',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text('Start a new room for your group'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const CreateRoomScreen()),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.secondary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.group_add_rounded,
+                    color: Theme.of(context).colorScheme.secondary,
+                  ),
+                ),
+                title: const Text(
+                  'Join Existing Room',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text('Enter a room code to join'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const JoinRoomScreen()),
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
     );
   }
 

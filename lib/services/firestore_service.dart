@@ -167,6 +167,7 @@ class FirestoreService {
     required String description,
     required double amount,
     required String paidBy,
+    Map<String, double>? payers,
     required String category,
     required List<String> splitAmong,
     required Map<String, double> splits,
@@ -180,6 +181,7 @@ class FirestoreService {
       'description': description,
       'amount': amount,
       'paidBy': paidBy,
+      if (payers != null && payers.isNotEmpty) 'payers': payers,
       'category': category,
       'splitAmong': splitAmong,
       'splits': splits,
@@ -201,6 +203,7 @@ class FirestoreService {
     String? description,
     double? amount,
     String? paidBy,
+    Map<String, double>? payers,
     String? category,
     List<String>? splitAmong,
     Map<String, double>? splits,
@@ -211,6 +214,7 @@ class FirestoreService {
     if (description != null) updates['description'] = description;
     if (amount != null) updates['amount'] = amount;
     if (paidBy != null) updates['paidBy'] = paidBy;
+    if (payers != null) updates['payers'] = payers;
     if (category != null) updates['category'] = category;
     if (splitAmong != null) updates['splitAmong'] = splitAmong;
     if (splits != null) updates['splits'] = splits;
@@ -458,5 +462,49 @@ class FirestoreService {
             };
           }).toList();
         });
+  }
+
+  /// ---------------------------
+  /// PAYMENTS (subcollection: rooms/{roomId}/payments)
+  /// ---------------------------
+
+  CollectionReference paymentsRef(String roomId) =>
+      _rooms.doc(roomId).collection('payments');
+
+  /// Add a payment record (Member A paid Member B)
+  Future<void> addPayment({
+    required String roomId,
+    required String payerId,
+    required String receiverId,
+    required double amount,
+    String? note,
+    required String createdBy,
+  }) async {
+    await paymentsRef(roomId).add({
+      'roomId': roomId,
+      'payerId': payerId,
+      'receiverId': receiverId,
+      'amount': amount,
+      'note': note,
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdBy': createdBy,
+    });
+  }
+
+  /// Stream all payments for a room
+  Stream<List<Map<String, dynamic>>> paymentsForRoom(String roomId) {
+    return paymentsRef(
+      roomId,
+    ).orderBy('createdAt', descending: true).snapshots().map((snap) {
+      return snap.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return {...data, 'id': doc.id};
+      }).toList();
+    });
+  }
+
+  /// Delete a payment
+  Future<void> deletePayment(String roomId, String paymentId) async {
+    await paymentsRef(roomId).doc(paymentId).delete();
   }
 }

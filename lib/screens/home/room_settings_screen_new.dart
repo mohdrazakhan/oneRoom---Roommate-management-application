@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../Models/room.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/auth_provider.dart';
@@ -58,23 +61,11 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   }
 
   void _shareRoomCode(BuildContext context) {
-    // For now, just copy. Later can integrate share_plus package
     final message =
         'Join my room "${widget.room.name}" on One Room app!\n\n'
         'Room Code: ${widget.room.id}\n\n'
         'Use this code to join and sync all our tasks and expenses.';
-
-    Clipboard.setData(ClipboardData(text: message));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Share message copied! Paste it to share with roommates.',
-        ),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 3),
-      ),
-    );
+    Share.share(message, subject: 'Join my One Room group!');
   }
 
   Future<void> _deleteRoom() async {
@@ -234,7 +225,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
 
             const SizedBox(height: 24),
 
-            // Invite Section
+            // Invite Section with QR code and enhanced sharing
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -268,69 +259,56 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Room Code',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.grey,
+                  Center(
+                    child: QrImageView(
+                      data: widget.room.id,
+                      version: QrVersions.auto,
+                      size: 120,
+                      backgroundColor: Colors.white,
+                      embeddedImageStyle: QrEmbeddedImageStyle(
+                        size: Size(40, 40),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Text(
+                      widget.room.id,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.3),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.content_copy_rounded),
+                        onPressed: () => _copyRoomCode(context),
+                        color: Theme.of(context).colorScheme.primary,
+                        tooltip: 'Copy code',
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            widget.room.id,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.content_copy_rounded),
-                          onPressed: () => _copyRoomCode(context),
-                          color: Theme.of(context).colorScheme.primary,
-                          tooltip: 'Copy code',
-                        ),
-                      ],
-                    ),
+                      IconButton(
+                        icon: const Icon(Icons.share_rounded),
+                        onPressed: () => _shareRoomCode(context),
+                        color: Theme.of(context).colorScheme.primary,
+                        tooltip: 'Share code',
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   Text(
-                    'Share this code with your roommates so they can join and sync all data.',
+                    'Scan the QR code or use the room code to join and sync all data.',
                     style: TextStyle(
                       color: Colors.grey.shade600,
                       fontSize: 14,
                       height: 1.5,
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _shareRoomCode(context),
-                      icon: const Icon(Icons.share_rounded),
-                      label: const Text('Share Room Code'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),

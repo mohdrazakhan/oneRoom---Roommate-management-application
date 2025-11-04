@@ -239,10 +239,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         subtitle: FutureBuilder<String>(
-          future: _getUserName(firestoreService, expense.paidBy),
+          future: _formatPayersSubtitle(firestoreService, expense),
           builder: (context, snapshot) {
-            final paidByName = snapshot.data ?? 'Someone';
-            return Text('Paid by $paidByName');
+            final text = snapshot.data ?? 'Paid by —';
+            return Text(text);
           },
         ),
         trailing: Column(
@@ -325,5 +325,36 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
     } catch (e) {
       return uid.length > 8 ? '${uid.substring(0, 8)}…' : uid;
     }
+  }
+
+  Future<String> _formatPayersSubtitle(
+    FirestoreService firestoreService,
+    Expense expense,
+  ) async {
+    final payers = expense.effectivePayers();
+    if (payers.isEmpty) return 'Paid info unavailable';
+    if (payers.length == 1) {
+      final uid = payers.keys.first;
+      final name = await _getUserName(firestoreService, uid);
+      return 'Paid by $name';
+    }
+
+    // Multiple payers: show top 2 contributors and count of others
+    final sorted = payers.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final top = sorted.take(2).toList();
+    final othersCount = payers.length - top.length;
+
+    final names = await Future.wait(
+      top.map((e) async {
+        final name = await _getUserName(firestoreService, e.key);
+        return '$name (₹${e.value.toStringAsFixed(0)})';
+      }),
+    );
+
+    final base = names.join(', ');
+    return othersCount > 0
+        ? 'Paid by $base + $othersCount more'
+        : 'Paid by $base';
   }
 }

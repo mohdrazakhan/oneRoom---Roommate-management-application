@@ -1,5 +1,7 @@
 // lib/Models/expense.dart
+// Firestore helper: rooms, expenses, users
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'payment.dart';
 
 class Expense {
   final String id;
@@ -7,6 +9,7 @@ class Expense {
   final String description;
   final double amount;
   final String paidBy; // UID of person who paid
+  final Map<String, double>? payers; // Optional: multi-payer breakdown
   final DateTime createdAt;
   final String category;
   final List<String> splitAmong; // UIDs of people to split among
@@ -21,6 +24,7 @@ class Expense {
     required this.description,
     required this.amount,
     required this.paidBy,
+    this.payers,
     required this.createdAt,
     this.category = 'Other',
     required this.splitAmong,
@@ -40,7 +44,10 @@ class Expense {
       amount: (data['amount'] is int)
           ? (data['amount'] as int).toDouble()
           : (data['amount'] ?? 0.0),
-      paidBy: data['paidBy'] ?? '',
+      paidBy: data['paidBy'] is String ? (data['paidBy'] as String) : '',
+      payers: (data['payers'] as Map<String, dynamic>?)?.map(
+        (k, v) => MapEntry(k, v is int ? v.toDouble() : (v as double)),
+      ),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       category: data['category'] ?? 'Other',
       splitAmong: List<String>.from(data['splitAmong'] ?? []),
@@ -100,7 +107,10 @@ class Expense {
       roomId: map['roomId'] ?? '',
       description: map['description'] ?? '',
       amount: amount,
-      paidBy: map['paidBy'] ?? '',
+      paidBy: map['paidBy'] is String ? (map['paidBy'] as String) : '',
+      payers: (map['payers'] as Map<String, dynamic>?)?.map(
+        (k, v) => MapEntry(k, v is int ? v.toDouble() : (v as double)),
+      ),
       createdAt: createdAt,
       category: map['category'] ?? 'Other',
       splitAmong: List<String>.from(map['splitAmong'] ?? const <String>[]),
@@ -119,6 +129,7 @@ class Expense {
       'description': description,
       'amount': amount,
       'paidBy': paidBy,
+      if (payers != null && payers!.isNotEmpty) 'payers': payers,
       'createdAt': Timestamp.fromDate(createdAt),
       'category': category,
       'splitAmong': splitAmong,
@@ -127,6 +138,13 @@ class Expense {
       'receiptUrl': receiptUrl,
       'settledWith': settledWith,
     };
+  }
+
+  /// Return the multi-payer map if present; otherwise fall back to a single entry using paidBy/amount.
+  Map<String, double> effectivePayers() {
+    if (payers != null && payers!.isNotEmpty) return Map.of(payers!);
+    if (paidBy.isNotEmpty) return {paidBy: amount};
+    return const {};
   }
 
   // Calculate if expense is fully settled
@@ -193,8 +211,17 @@ class ExpenseCategory {
   static ExpenseCategory getCategory(String name) {
     return categories.firstWhere(
       (cat) => cat.name == name,
-      orElse: () => categories.last,
+      orElse: () => ExpenseCategory(
+        name: name,
+        icon: '🏷️', // Default icon for custom categories
+        colorValue: 0xFF9E9E9E, // Grey for custom
+      ),
     );
+  }
+
+  /// Create a custom category from user input
+  static ExpenseCategory createCustom(String name, String emoji) {
+    return ExpenseCategory(name: name, icon: emoji, colorValue: 0xFF9E9E9E);
   }
 }
 
@@ -207,14 +234,16 @@ class Balance {
 }
 
 class BalanceCalculator {
-  // Calculate balances for all members in a room
+  // Calculate balances for all members in a room (expenses only)
   static Map<String, double> calculateBalances(List<Expense> expenses) {
     Map<String, double> balances = {};
 
     for (var expense in expenses) {
-      // Person who paid gets credited
-      balances[expense.paidBy] =
-          (balances[expense.paidBy] ?? 0) + expense.amount;
+      // Credit each payer according to their contribution (multi-payer aware)
+      final payers = expense.effectivePayers();
+      payers.forEach((uid, paidAmount) {
+        balances[uid] = (balances[uid] ?? 0) + paidAmount;
+      });
 
       // People who owe get debited
       expense.splits.forEach((uid, amount) {
@@ -222,6 +251,29 @@ class BalanceCalculator {
           balances[uid] = (balances[uid] ?? 0) - amount;
         }
       });
+    }
+
+    return balances;
+  }
+
+  // Calculate balances including payments as settlements
+  // Payments reduce the debt: if A pays B ₹200, A's balance increases by ₹200 and B's decreases by ₹200
+  static Map<String, double> calculateBalancesWithPayments(
+    List<Expense> expenses,
+    List<Payment> payments,
+  ) {
+    // First calculate balances from expenses
+    Map<String, double> balances = calculateBalances(expenses);
+
+    // Then apply payments as settlements
+    for (var payment in payments) {
+      // Payer's balance increases (they paid, reducing their debt)
+      balances[payment.payerId] =
+          (balances[payment.payerId] ?? 0) + payment.amount;
+
+      // Receiver's balance decreases (they received payment, reducing what they're owed)
+      balances[payment.receiverId] =
+          (balances[payment.receiverId] ?? 0) - payment.amount;
     }
 
     return balances;

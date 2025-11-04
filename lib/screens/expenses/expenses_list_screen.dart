@@ -9,6 +9,8 @@ import 'enhanced_modern_expense_screen.dart';
 import 'expense_audit_log_screen.dart';
 import 'expense_detail_popup.dart';
 import 'balances_screen.dart';
+import 'record_payment_screen.dart';
+import 'payment_history_screen.dart';
 import '../../providers/auth_provider.dart';
 
 class ExpensesListScreen extends StatefulWidget {
@@ -45,6 +47,19 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
+          // Payment History Button
+          IconButton(
+            tooltip: 'Payment History',
+            icon: const Icon(Icons.payments_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PaymentHistoryScreen(roomId: widget.roomId),
+                ),
+              );
+            },
+          ),
           // Audit Log Button
           IconButton(
             tooltip: 'Activity Log',
@@ -286,20 +301,104 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  EnhancedModernExpenseScreen(roomId: widget.roomId),
-            ),
-          );
+          _showExpenseOptionsMenu(context);
         },
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Add Expense'),
+        child: const Icon(Icons.add_rounded, size: 28),
         elevation: 8,
       ),
+    );
+  }
+
+  void _showExpenseOptionsMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.shopping_cart_rounded,
+                    color: Colors.orange,
+                  ),
+                ),
+                title: const Text(
+                  'New Expense',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text('A purchase made for the group'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          EnhancedModernExpenseScreen(roomId: widget.roomId),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.payments_rounded,
+                    color: Colors.green,
+                  ),
+                ),
+                title: const Text(
+                  'Record Payment',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text('A payment within the group'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          RecordPaymentScreen(roomId: widget.roomId),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
     );
   }
 
