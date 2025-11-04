@@ -238,10 +238,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final firestore = FirestoreService();
       final expMap = await firestore.getExpense(widget.roomId, id);
       if (expMap != null) {
-        final expense = Expense.fromDoc(
-          // Simulate a DocumentSnapshot for fromDoc
-          _FakeDoc(id, expMap),
-        );
+        final expense = Expense.fromMap(expMap, id);
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -746,7 +743,12 @@ class _MessageBubble extends StatelessWidget {
     Widget child;
     switch (message.type) {
       case ChatMessageType.text:
-        child = Text(message.text ?? '', style: TextStyle(color: fg));
+        child = Text(
+          message.text ?? '',
+          style: TextStyle(color: fg),
+          softWrap: true,
+          overflow: TextOverflow.visible,
+        );
         break;
       case ChatMessageType.image:
         child = Column(
@@ -811,6 +813,10 @@ class _MessageBubble extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: const EdgeInsets.all(12),
+        constraints: BoxConstraints(
+          // Cap bubble width so long text wraps within screen
+          maxWidth: MediaQuery.of(context).size.width * 0.8,
+        ),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.only(
@@ -900,7 +906,9 @@ class _PollTile extends StatelessWidget {
               child: Stack(
                 children: [
                   Container(
-                    width: 260,
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.of(context).size.width * 0.8,
+                    ),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 10,
@@ -971,14 +979,19 @@ class _LinkTile extends StatelessWidget {
       onTap: onOpen == null ? null : () => onOpen!(type, id),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.link_rounded, color: color),
           const SizedBox(width: 8),
-          Text(
-            text ?? 'Open $type',
-            style: TextStyle(
-              color: color,
-              decoration: TextDecoration.underline,
+          Flexible(
+            child: Text(
+              text ?? 'Open $type',
+              softWrap: true,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                color: color,
+                decoration: TextDecoration.underline,
+              ),
             ),
           ),
         ],
@@ -1066,16 +1079,4 @@ class _LinkPicker extends StatelessWidget {
     if (a == null) return '';
     return 'Amount: ${a.toStringAsFixed(2)}';
   }
-}
-
-// Helper class to simulate a DocumentSnapshot for Expense.fromDoc
-class _FakeDoc implements DocumentSnapshot {
-  @override
-  final String id;
-  final Map<String, dynamic> _data;
-  _FakeDoc(this.id, this._data);
-  @override
-  Map<String, dynamic>? data() => _data;
-  // ...existing code for other members throws UnimplementedError
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

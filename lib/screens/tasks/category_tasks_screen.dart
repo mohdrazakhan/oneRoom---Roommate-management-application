@@ -322,6 +322,8 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
   Widget _buildTaskCard(BuildContext context, Task task) {
     final tasksProvider = context.read<TasksProvider>();
     final assignee = tasksProvider.getCurrentAssignee(task);
+    final service = context.read<FirestoreService>();
+    final today = DateTime.now();
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -470,6 +472,55 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
                     'Current: ${_getMemberDisplayName(assignee)}',
                     widget.category.color,
                   ),
+
+                // Live status for today's instance
+                StreamBuilder<Map<String, dynamic>?>(
+                  stream: service.watchTaskInstanceForDate(
+                    widget.roomId,
+                    task.id,
+                    today,
+                  ),
+                  builder: (context, snap) {
+                    final instance = snap.data;
+                    if (instance == null) {
+                      // Not generated yet
+                      return _buildChip(
+                        Icons.hourglass_empty_rounded,
+                        'No instance today',
+                        Colors.grey,
+                      );
+                    }
+                    final completed =
+                        (instance['isCompleted'] as bool?) ?? false;
+                    return _buildChip(
+                      completed
+                          ? Icons.check_circle_rounded
+                          : Icons.pending_outlined,
+                      completed ? 'Today: Completed' : 'Today: Pending',
+                      completed ? Colors.green : Colors.orange,
+                    );
+                  },
+                ),
+
+                // Overdue counter (last 30 days)
+                FutureBuilder<int>(
+                  future: service.countOverdueTaskInstances(
+                    widget.roomId,
+                    task.id,
+                    lookbackDays: 30,
+                  ),
+                  builder: (context, snap) {
+                    if (!snap.hasData || (snap.data ?? 0) == 0) {
+                      return const SizedBox.shrink();
+                    }
+                    final overdue = snap.data!;
+                    return _buildChip(
+                      Icons.warning_amber_rounded,
+                      'Overdue: $overdue day${overdue == 1 ? '' : 's'}',
+                      Colors.red,
+                    );
+                  },
+                ),
               ],
             ),
           ],

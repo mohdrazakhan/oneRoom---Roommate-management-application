@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../Models/task_category.dart';
 import '../Models/task.dart';
+import '../services/firestore_service.dart';
+import '../services/notification_helper.dart';
 
 class TasksProvider with ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirestoreService _firestoreService = FirestoreService();
 
   // ==================== CATEGORIES ====================
 
@@ -137,11 +140,51 @@ class TasksProvider with ChangeNotifier {
       createdAt: DateTime.now(),
     );
 
-    await _firestore
+    final docRef = await _firestore
         .collection('rooms')
         .doc(roomId)
         .collection('tasks')
         .add(task.toMap());
+
+    // Generate first few instances immediately so dashboard updates fast,
+    // then generate the rest in the background.
+    try {
+      await _firestoreService.generateTaskInstancesForTask(
+        roomId,
+        docRef.id,
+        daysAhead: 3,
+      );
+    } catch (e) {
+      debugPrint('createTask: immediate generation (3 days) failed -> $e');
+    }
+
+    _firestoreService
+        .generateTaskInstancesForTask(roomId, docRef.id, daysAhead: 30)
+        .catchError((e) {
+          debugPrint('createTask: background generation failed -> $e');
+        });
+
+    // Send notification to room members
+    try {
+      final roomDoc = await _firestore.collection('rooms').doc(roomId).get();
+      final roomName = roomDoc.data()?['name'] as String? ?? 'Room';
+      final categoryDoc = await _firestore
+          .collection('rooms')
+          .doc(roomId)
+          .collection('task_categories')
+          .doc(categoryId)
+          .get();
+      final categoryName = categoryDoc.data()?['name'] as String? ?? 'Tasks';
+
+      await NotificationHelper.notifyTaskCreated(
+        roomId: roomId,
+        roomName: roomName,
+        taskTitle: title,
+        categoryName: categoryName,
+      );
+    } catch (e) {
+      debugPrint('createTask: notification failed -> $e');
+    }
   }
 
   Future<void> updateTask(String roomId, Task task) async {
@@ -151,19 +194,104 @@ class TasksProvider with ChangeNotifier {
         .collection('tasks')
         .doc(task.id)
         .update(task.toMap());
+
+    // If task becomes inactive, remove its scheduled instances.
+    // If it stays active, you may want to regenerate to reflect changes.
+    try {
+      if (task.isActive == false) {
+        await _firestoreService.deleteTaskInstancesForTask(roomId, task.id);
+      }
+    } catch (e) {
+      debugPrint('updateTask: instance sync warning -> $e');
+    }
+
+    // Send notification
+    try {
+      final roomDoc = await _firestore.collection('rooms').doc(roomId).get();
+      final roomName = roomDoc.data()?['name'] as String? ?? 'Room';
+
+      await NotificationHelper.notifyTaskEdited(
+        roomId: roomId,
+        roomName: roomName,
+        taskTitle: task.title,
+      );
+    } catch (e) {
+      debugPrint('updateTask: notification failed -> $e');
+    }
   }
 
   Future<void> deleteTask(String roomId, String taskId) async {
+    // Get task title for notification before deleting
+    String taskTitle = 'Task';
+    try {
+      final taskDoc = await _firestore
+          .collection('rooms')
+          .doc(roomId)
+          .collection('tasks')
+          .doc(taskId)
+          .get();
+      taskTitle = taskDoc.data()?['title'] as String? ?? 'Task';
+    } catch (e) {
+      debugPrint('deleteTask: failed to get task title -> $e');
+    }
+
+    // Delete the task document
     await _firestore
         .collection('rooms')
         .doc(roomId)
         .collection('tasks')
         .doc(taskId)
         .delete();
+
+    // Delete all task instances for this task
+    final taskInstancesSnapshot = await _firestore
+        .collection('rooms')
+        .doc(roomId)
+        .collection('taskInstances')
+        .where('taskId', isEqualTo: taskId)
+        .get();
+
+    for (var doc in taskInstancesSnapshot.docs) {
+      await doc.reference.delete();
+    }
+
+    // Send notification
+    try {
+      final roomDoc = await _firestore.collection('rooms').doc(roomId).get();
+      final roomName = roomDoc.data()?['name'] as String? ?? 'Room';
+
+      await NotificationHelper.notifyTaskDeleted(
+        roomId: roomId,
+        roomName: roomName,
+        taskTitle: taskTitle,
+      );
+    } catch (e) {
+      debugPrint('deleteTask: notification failed -> $e');
+    }
   }
 
   Future<void> toggleTaskActive(String roomId, Task task) async {
-    await updateTask(roomId, task.copyWith(isActive: !task.isActive));
+    final newActive = !task.isActive;
+    final updated = task.copyWith(isActive: newActive);
+    await _firestore
+        .collection('rooms')
+        .doc(roomId)
+        .collection('tasks')
+        .doc(task.id)
+        .update(updated.toMap());
+
+    // Sync taskInstances with activation state
+    try {
+      if (!newActive) {
+        // Turning OFF: delete all instances for this task
+        await _firestoreService.deleteTaskInstancesForTask(roomId, task.id);
+      } else {
+        // Turning ON: ensure future instances exist
+        await _firestoreService.generateTaskInstancesForTask(roomId, task.id);
+      }
+    } catch (e) {
+      debugPrint('toggleTaskActive: instance sync warning -> $e');
+    }
   }
 
   // ==================== ROTATION ====================

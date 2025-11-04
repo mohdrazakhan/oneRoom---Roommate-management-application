@@ -111,7 +111,7 @@ class MyApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'Roommate Manager',
+      title: 'One-Room',
       debugShowCheckedModeBanner: false,
       theme: baseTheme,
 

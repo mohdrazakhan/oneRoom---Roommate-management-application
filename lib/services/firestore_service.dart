@@ -507,4 +507,505 @@ class FirestoreService {
   Future<void> deletePayment(String roomId, String paymentId) async {
     await paymentsRef(roomId).doc(paymentId).delete();
   }
+
+  /// ---------------------------
+  /// TASK INSTANCES & MANAGEMENT
+  /// ---------------------------
+
+  /// Get today's tasks for a user across all their rooms (live collectionGroup stream)
+  Stream<List<Map<String, dynamic>>> getTodayTasksForUser(String userId) {
+    final today = DateTime.now();
+    final startOfDay = DateTime(today.year, today.month, today.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+
+    // Fallback index-friendly query: filter by assignee only and apply date range client-side
+    // Re-enable server-side date filters once the composite index is confirmed active.
+    // DEBUG: Using client-side date filtering to avoid composite index during rollout
+    // ignore: avoid_print
+    print(
+      'FirestoreService.getTodayTasksForUser: client-side date filter active for user: ' +
+          userId,
+    );
+    return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
+      roomsSnap,
+    ) async {
+      final List<Map<String, dynamic>> all = [];
+      for (final room in roomsSnap.docs) {
+        final roomId = room.id;
+        final roomName =
+            (room.data() as Map<String, dynamic>)['name'] ?? 'Room';
+        final q = _rooms
+            .doc(roomId)
+            .collection('taskInstances')
+            .where('assignedTo', isEqualTo: userId)
+            .where(
+              'scheduledDate',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
+            )
+            .where('scheduledDate', isLessThan: Timestamp.fromDate(endOfDay));
+        final snap = await q.get();
+        for (final d in snap.docs) {
+          final m = d.data();
+          all.add({
+            ...m,
+            'taskInstanceId': d.id,
+            'roomId': roomId,
+            'roomName': roomName,
+          });
+        }
+      }
+      all.sort((a, b) {
+        final aDate = (a['scheduledDate'] as Timestamp).toDate();
+        final bDate = (b['scheduledDate'] as Timestamp).toDate();
+        return aDate.compareTo(bDate);
+      });
+      return all;
+    });
+  }
+
+  /// Get upcoming tasks for a user (next 30 days)
+  Stream<List<Map<String, dynamic>>> getUpcomingTasksForUser(String userId) {
+    final today = DateTime.now();
+    final tomorrow = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).add(const Duration(days: 1));
+    final nextThirtyDays = tomorrow.add(const Duration(days: 30));
+
+    // DEBUG: Using client-side date filtering to avoid composite index during rollout
+    // ignore: avoid_print
+    print(
+      'FirestoreService.getUpcomingTasksForUser (30 days): client-side date filter active for user: ' +
+          userId,
+    );
+    return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
+      roomsSnap,
+    ) async {
+      final List<Map<String, dynamic>> all = [];
+      for (final room in roomsSnap.docs) {
+        final roomId = room.id;
+        final roomName =
+            (room.data() as Map<String, dynamic>)['name'] ?? 'Room';
+        final q = _rooms
+            .doc(roomId)
+            .collection('taskInstances')
+            .where('assignedTo', isEqualTo: userId)
+            .where(
+              'scheduledDate',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(tomorrow),
+            )
+            .where(
+              'scheduledDate',
+              isLessThan: Timestamp.fromDate(nextThirtyDays),
+            );
+        final snap = await q.get();
+        for (final d in snap.docs) {
+          final m = d.data();
+          all.add({
+            ...m,
+            'taskInstanceId': d.id,
+            'roomId': roomId,
+            'roomName': roomName,
+          });
+        }
+      }
+      all.sort((a, b) {
+        final aDate = (a['scheduledDate'] as Timestamp).toDate();
+        final bDate = (b['scheduledDate'] as Timestamp).toDate();
+        return aDate.compareTo(bDate);
+      });
+      return all;
+    });
+  }
+
+  /// Mark a task instance as completed or pending
+  Future<void> markTaskInstanceAsCompleted(
+    String roomId,
+    String taskInstanceId,
+    bool isCompleted,
+  ) async {
+    await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId)
+        .update({
+          'isCompleted': isCompleted,
+          'completedAt': isCompleted ? FieldValue.serverTimestamp() : null,
+        });
+  }
+
+  /// Get room members with their profiles
+  Future<List<Map<String, dynamic>>> getRoomMembers(String roomId) async {
+    final roomDoc = await _rooms.doc(roomId).get();
+    if (!roomDoc.exists) return [];
+
+    final roomData = roomDoc.data() as Map<String, dynamic>;
+    final members = List<String>.from(roomData['members'] ?? []);
+
+    final membersWithProfiles = <Map<String, dynamic>>[];
+
+    for (final uid in members) {
+      final profile = await getUserProfile(uid);
+      if (profile != null) {
+        membersWithProfiles.add({
+          'uid': uid,
+          'displayName': profile['displayName'] ?? 'Member',
+          ...profile,
+        });
+      }
+    }
+
+    return membersWithProfiles;
+  }
+
+  /// Create a swap request
+  Future<void> createSwapRequest({
+    required String roomId,
+    required String taskInstanceId,
+    required String targetUserId,
+  }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) throw Exception('User not logged in');
+
+    // Get requester and target names
+    final requesterProfile = await getUserProfile(currentUserId);
+    final targetProfile = await getUserProfile(targetUserId);
+
+    await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId)
+        .update({
+          'swapRequest': {
+            'requesterId': currentUserId,
+            'requesterName': requesterProfile?['displayName'] ?? 'Member',
+            'targetId': targetUserId,
+            'targetName': targetProfile?['displayName'] ?? 'Member',
+            'status': 'pending',
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+        });
+  }
+
+  /// Respond to a swap request
+  Future<void> respondToSwapRequest({
+    required String roomId,
+    required String taskInstanceId,
+    required bool approve,
+  }) async {
+    final taskInstanceRef = _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId);
+    final taskInstanceDoc = await taskInstanceRef.get();
+
+    if (!taskInstanceDoc.exists) throw Exception('Task instance not found');
+
+    final taskData = taskInstanceDoc.data()!;
+    final swapRequest = taskData['swapRequest'] as Map<String, dynamic>?;
+
+    if (swapRequest == null) throw Exception('No swap request found');
+
+    if (approve) {
+      final requesterId = swapRequest['requesterId'];
+      final currentAssignee = taskData['assignedTo'];
+
+      // Swap the assignees
+      await taskInstanceRef.update({
+        'assignedTo': requesterId,
+        'swapRequest.status': 'approved',
+        'swapRequest.approvedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Find the requester's task on the same date and swap
+      final scheduledDate = taskData['scheduledDate'] as Timestamp;
+      final requesterTasksSnapshot = await _rooms
+          .doc(roomId)
+          .collection('taskInstances')
+          .where('assignedTo', isEqualTo: requesterId)
+          .where('scheduledDate', isEqualTo: scheduledDate)
+          .limit(1)
+          .get();
+
+      if (requesterTasksSnapshot.docs.isNotEmpty) {
+        await requesterTasksSnapshot.docs.first.reference.update({
+          'assignedTo': currentAssignee,
+        });
+      }
+    } else {
+      await taskInstanceRef.update({
+        'swapRequest.status': 'rejected',
+        'swapRequest.rejectedAt': FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  /// Request reschedule
+  Future<void> requestReschedule({
+    required String roomId,
+    required String taskInstanceId,
+    required DateTime newDate,
+  }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) throw Exception('User not logged in');
+
+    await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId)
+        .update({
+          'rescheduleRequest': {
+            'requestedBy': currentUserId,
+            'newDate': Timestamp.fromDate(newDate),
+            'status': 'pending',
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+        });
+  }
+
+  /// Generate task instances for a room (for the next 30 days)
+  Future<void> generateTaskInstancesForRoom(
+    String roomId, {
+    int daysAhead = 30,
+  }) async {
+    final tasksSnapshot = await _rooms
+        .doc(roomId)
+        .collection('tasks')
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    for (var taskDoc in tasksSnapshot.docs) {
+      final taskData = taskDoc.data();
+      final taskId = taskDoc.id;
+      final frequency = taskData['frequency'] as String?;
+      final rotationType = taskData['rotationType'] as String?;
+      final memberIds = List<String>.from(taskData['memberIds'] ?? []);
+
+      // Try to get title from multiple possible field names
+      final title =
+          (taskData['title'] as String?) ??
+          (taskData['name'] as String?) ??
+          'Untitled Task';
+
+      final categoryId = taskData['categoryId'] as String? ?? '';
+      final timeSlot = taskData['timeSlot'] as Map<String, dynamic>?;
+      final estimatedMinutes = taskData['estimatedMinutes'] as int? ?? 30;
+      final currentRotationIndex =
+          taskData['currentRotationIndex'] as int? ?? 0;
+
+      if (memberIds.isEmpty) continue;
+      if (frequency != 'daily') continue; // Only handle daily tasks for now
+
+      // Generate instances for the next X days
+      for (int dayOffset = 0; dayOffset < daysAhead; dayOffset++) {
+        final targetDate = today.add(Duration(days: dayOffset));
+        final scheduledDate = Timestamp.fromDate(targetDate);
+
+        // Check if instance already exists for this task on this date
+        final existingInstances = await _rooms
+            .doc(roomId)
+            .collection('taskInstances')
+            .where('taskId', isEqualTo: taskId)
+            .where('scheduledDate', isEqualTo: scheduledDate)
+            .limit(1)
+            .get();
+
+        if (existingInstances.docs.isNotEmpty) {
+          continue; // Instance already exists
+        }
+
+        // Calculate assignee based on rotation
+        String assignedTo;
+        if (rotationType == 'roundRobin') {
+          // Auto-rotate: assign based on day offset + current index
+          final assigneeIndex =
+              (currentRotationIndex + dayOffset) % memberIds.length;
+          assignedTo = memberIds[assigneeIndex];
+        } else {
+          // Manual or other: assign to current rotation index
+          assignedTo = memberIds[currentRotationIndex % memberIds.length];
+        }
+
+        // Create task instance
+        await _rooms.doc(roomId).collection('taskInstances').add({
+          'taskId': taskId,
+          'roomId': roomId,
+          'title': title,
+          'categoryId': categoryId,
+          'assignedTo': assignedTo,
+          'scheduledDate': scheduledDate,
+          'timeSlot': timeSlot,
+          'estimatedMinutes': estimatedMinutes,
+          'isCompleted': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+    }
+  }
+
+  /// Generate task instances for all rooms a user is in
+  Future<void> generateTaskInstancesForUser(String userId) async {
+    final roomsSnapshot = await _rooms
+        .where('members', arrayContains: userId)
+        .get();
+
+    for (var roomDoc in roomsSnapshot.docs) {
+      await generateTaskInstancesForRoom(roomDoc.id);
+    }
+  }
+
+  /// Delete all task instances for a room (useful for regenerating)
+  Future<void> deleteAllTaskInstances(String roomId) async {
+    final instancesSnapshot = await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .get();
+
+    for (var doc in instancesSnapshot.docs) {
+      await doc.reference.delete();
+    }
+  }
+
+  /// Delete all task instances for a specific task
+  Future<void> deleteTaskInstancesForTask(String roomId, String taskId) async {
+    final snapshot = await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .where('taskId', isEqualTo: taskId)
+        .get();
+    for (final d in snapshot.docs) {
+      await d.reference.delete();
+    }
+  }
+
+  /// Generate task instances only for a specific task
+  Future<void> generateTaskInstancesForTask(
+    String roomId,
+    String taskId, {
+    int daysAhead = 30,
+  }) async {
+    final taskDoc = await _rooms
+        .doc(roomId)
+        .collection('tasks')
+        .doc(taskId)
+        .get();
+    if (!taskDoc.exists) return;
+    final taskData = taskDoc.data() as Map<String, dynamic>;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final frequency = taskData['frequency'] as String?;
+    final rotationType = taskData['rotationType'] as String?;
+    final memberIds = List<String>.from(taskData['memberIds'] ?? []);
+    final title =
+        (taskData['title'] as String?) ??
+        (taskData['name'] as String?) ??
+        'Untitled Task';
+    final categoryId = taskData['categoryId'] as String? ?? '';
+    final timeSlot = taskData['timeSlot'] as Map<String, dynamic>?;
+    final estimatedMinutes = taskData['estimatedMinutes'] as int? ?? 30;
+    final currentRotationIndex = taskData['currentRotationIndex'] as int? ?? 0;
+
+    if (memberIds.isEmpty) return;
+    if (frequency != 'daily') return;
+
+    // Use a single batch for performance and deterministic doc IDs for idempotency.
+    final batch = _rooms.firestore.batch();
+
+    for (int dayOffset = 0; dayOffset < daysAhead; dayOffset++) {
+      final targetDate = today.add(Duration(days: dayOffset));
+      final scheduledDate = Timestamp.fromDate(targetDate);
+
+      final assignedTo = (rotationType == 'roundRobin')
+          ? memberIds[(currentRotationIndex + dayOffset) % memberIds.length]
+          : memberIds[currentRotationIndex % memberIds.length];
+
+      final docId = _taskInstanceDocId(taskId, targetDate);
+      final ref = _rooms.doc(roomId).collection('taskInstances').doc(docId);
+      batch.set(ref, {
+        'taskId': taskId,
+        'roomId': roomId,
+        'title': title,
+        'categoryId': categoryId,
+        'assignedTo': assignedTo,
+        'scheduledDate': scheduledDate,
+        'timeSlot': timeSlot,
+        'estimatedMinutes': estimatedMinutes,
+        'isCompleted': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: false));
+    }
+
+    await batch.commit();
+  }
+
+  // ---------- Task instance utilities ----------
+
+  String _taskInstanceDocId(String taskId, DateTime date) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '${taskId}_${y}${m}${d}';
+  }
+
+  /// Stream the task instance document for a given task on a specific date (or null if missing)
+  Stream<Map<String, dynamic>?> watchTaskInstanceForDate(
+    String roomId,
+    String taskId,
+    DateTime date,
+  ) {
+    final day = DateTime(date.year, date.month, date.day);
+    final docId = _taskInstanceDocId(taskId, day);
+    final ref = _rooms.doc(roomId).collection('taskInstances').doc(docId);
+    return ref.snapshots().asyncMap((snap) async {
+      if (snap.exists) {
+        final data = snap.data() as Map<String, dynamic>;
+        return {...data, 'taskInstanceId': snap.id};
+      }
+      // Fallback for legacy instances created before deterministic IDs
+      final q = await _rooms
+          .doc(roomId)
+          .collection('taskInstances')
+          .where('taskId', isEqualTo: taskId)
+          .where('scheduledDate', isEqualTo: Timestamp.fromDate(day))
+          .limit(1)
+          .get();
+      if (q.docs.isNotEmpty) {
+        final d = q.docs.first;
+        final data = d.data();
+        return {...data, 'taskInstanceId': d.id};
+      }
+      return null;
+    });
+  }
+
+  /// Count overdue daily instances (not completed) looking back up to [lookbackDays]
+  Future<int> countOverdueTaskInstances(
+    String roomId,
+    String taskId, {
+    int lookbackDays = 30,
+  }) async {
+    final now = DateTime.now();
+    int count = 0;
+    for (int i = 1; i <= lookbackDays; i++) {
+      final day = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).subtract(Duration(days: i));
+      final docId = _taskInstanceDocId(taskId, day);
+      final ref = _rooms.doc(roomId).collection('taskInstances').doc(docId);
+      final snap = await ref.get();
+      if (!snap.exists) continue;
+      final data = snap.data() as Map<String, dynamic>;
+      final completed = (data['isCompleted'] as bool?) ?? false;
+      if (!completed) count++;
+    }
+    return count;
+  }
 }

@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../Models/chat_message.dart';
+import 'notification_helper.dart';
 
 class ChatService {
   final _db = FirebaseFirestore.instance;
@@ -37,6 +38,22 @@ class ChatService {
       'text': text.trim(),
       'createdAt': FieldValue.serverTimestamp(),
     });
+
+    // Send notification to room members
+    try {
+      final roomDoc = await _db.collection('rooms').doc(roomId).get();
+      final roomName = roomDoc.data()?['name'] as String? ?? 'Room';
+      final preview = text.length > 50 ? '${text.substring(0, 50)}...' : text;
+
+      await NotificationHelper.notifyChatMessage(
+        roomId: roomId,
+        roomName: roomName,
+        messagePreview: preview,
+      );
+    } catch (e) {
+      // Don't block message send if notification fails
+      print('sendText: notification failed -> $e');
+    }
   }
 
   Future<String> _uploadFile(

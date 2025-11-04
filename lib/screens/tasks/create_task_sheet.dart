@@ -35,6 +35,7 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
   List<String> _selectedMembers = [];
   Map<String, Map<String, dynamic>> _memberProfiles = {}; // uid -> profile
   bool _loadingProfiles = false;
+  bool _isSaving = false;
 
   bool get _isEditing => widget.existingTask != null;
 
@@ -412,7 +413,7 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _saveTask,
+                    onPressed: _isSaving ? null : _saveTask,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: widget.category.color,
                       foregroundColor: Colors.white,
@@ -421,13 +422,38 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: Text(
-                      _isEditing ? 'Save Changes' : 'Create Task',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                    child: _isSaving
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                _isEditing ? 'Saving…' : 'Creating…',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Text(
+                            _isEditing ? 'Save Changes' : 'Create Task',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -440,7 +466,11 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
   }
 
   Future<void> _saveTask() async {
-    if (!_formKey.currentState!.validate()) return;
+    // Prevent re-entrancy / duplicate submissions
+    if (_isSaving) return;
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
 
     // For round-robin, we need at least one member selected
     if (_rotationType == RotationType.roundRobin && _selectedMembers.isEmpty) {
@@ -454,6 +484,7 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
     }
 
     try {
+      if (mounted) setState(() => _isSaving = true);
       final provider = context.read<TasksProvider>();
 
       if (_isEditing) {
@@ -473,6 +504,7 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
         );
         await provider.updateTask(widget.roomId, updated);
       } else {
+        print('Creating task...');
         await provider.createTask(
           roomId: widget.roomId,
           categoryId: widget.category.id,
@@ -488,26 +520,38 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
           timeSlot: _timeSlot,
           estimatedMinutes: _estimatedMinutes,
         );
+        print('Task created successfully!');
       }
 
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _isEditing ? 'Task updated!' : 'Task created successfully!',
-            ),
-            backgroundColor: widget.category.color,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      print('About to pop navigator...');
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+        print('Navigator popped!');
+
+        // Show success message after a small delay to ensure context is valid
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  _isEditing ? 'Task updated!' : 'Task created successfully!',
+                ),
+                backgroundColor: widget.category.color,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        });
       }
     } catch (e) {
+      print('ERROR creating task: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 }

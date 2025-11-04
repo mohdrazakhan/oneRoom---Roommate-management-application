@@ -7,6 +7,7 @@ import '../../widgets/room_card.dart';
 import '../../services/firestore_service.dart';
 import '../expenses/expenses_list_screen.dart';
 import '../tasks/tasks_home_screen.dart';
+import '../tasks/my_tasks_dashboard.dart';
 import '../profile/profile_screen.dart';
 import 'create_room_screen.dart';
 import 'join_room_screen.dart';
@@ -158,11 +159,16 @@ class DashboardScreen extends StatelessWidget {
 
               // Content
               Expanded(
-                child: roomsProvider.isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : roomsProvider.rooms.isEmpty
-                    ? _buildEmptyState(context)
-                    : _buildRoomsList(context, roomsProvider),
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    await roomsProvider.refresh();
+                  },
+                  child: roomsProvider.isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : roomsProvider.rooms.isEmpty
+                      ? _buildEmptyState(context)
+                      : _buildRoomsList(context, roomsProvider),
+                ),
               ),
             ],
           ),
@@ -318,11 +324,19 @@ class DashboardScreen extends StatelessWidget {
             future: FirestoreService().getTotalTasksCount(user?.uid ?? ''),
             builder: (context, snapshot) {
               final taskCount = snapshot.data ?? 0;
-              return _buildStatItem(
-                context,
-                Icons.task_alt_rounded,
-                '$taskCount',
-                'Tasks',
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MyTasksDashboard()),
+                  );
+                },
+                child: _buildStatItem(
+                  context,
+                  Icons.task_alt_rounded,
+                  '$taskCount',
+                  'Tasks',
+                ),
               );
             },
           ),

@@ -106,29 +106,14 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // App logo or icon
-                Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.primary,
-                        Theme.of(context).colorScheme.secondary,
-                      ],
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      'OR',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 28,
-                        letterSpacing: 2,
-                      ),
-                    ),
+                // App logo
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/Images/logo.png',
+                    height: 84,
+                    width: 84,
+                    fit: BoxFit.cover,
                   ),
                 ),
                 const SizedBox(height: 24),

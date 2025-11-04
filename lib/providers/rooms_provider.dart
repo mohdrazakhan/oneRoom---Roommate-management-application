@@ -23,20 +23,25 @@ class RoomsProvider extends ChangeNotifier {
     isLoading = true;
     notifyListeners();
 
-    _roomsSub = _fs.roomsForUser(uid).listen((listMap) {
-      rooms = listMap.map((m) {
-        // m is a map with fields and 'id' present (as used in the FirestoreService earlier)
-        final id = (m['id'] ?? '') as String;
-        return Room.fromMap(Map<String, dynamic>.from(m), id);
-      }).toList();
-      isLoading = false;
-      error = null;
-      notifyListeners();
-    }, onError: (e) {
-      error = e.toString();
-      isLoading = false;
-      notifyListeners();
-    });
+    _roomsSub = _fs
+        .roomsForUser(uid)
+        .listen(
+          (listMap) {
+            rooms = listMap.map((m) {
+              // m is a map with fields and 'id' present (as used in the FirestoreService earlier)
+              final id = (m['id'] ?? '') as String;
+              return Room.fromMap(Map<String, dynamic>.from(m), id);
+            }).toList();
+            isLoading = false;
+            error = null;
+            notifyListeners();
+          },
+          onError: (e) {
+            error = e.toString();
+            isLoading = false;
+            notifyListeners();
+          },
+        );
   }
 
   /// Stop listening (e.g., on sign out or provider dispose)
@@ -48,8 +53,40 @@ class RoomsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Refresh rooms data (restarts the listener)
+  Future<void> refresh() async {
+    if (_listeningUid != null) {
+      final uid = _listeningUid!;
+      await _roomsSub?.cancel();
+      isLoading = true;
+      notifyListeners();
+
+      _roomsSub = _fs
+          .roomsForUser(uid)
+          .listen(
+            (listMap) {
+              rooms = listMap.map((m) {
+                final id = (m['id'] ?? '') as String;
+                return Room.fromMap(Map<String, dynamic>.from(m), id);
+              }).toList();
+              isLoading = false;
+              error = null;
+              notifyListeners();
+            },
+            onError: (e) {
+              error = e.toString();
+              isLoading = false;
+              notifyListeners();
+            },
+          );
+    }
+  }
+
   /// Create a new room (delegates to FirestoreService)
-  Future<void> createRoom({required String name, required String createdBy}) async {
+  Future<void> createRoom({
+    required String name,
+    required String createdBy,
+  }) async {
     try {
       isLoading = true;
       notifyListeners();

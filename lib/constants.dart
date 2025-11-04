@@ -33,7 +33,7 @@ class AppRoutes {
 class AppStrings {
   AppStrings._();
 
-  static const String appName = 'Roommate Manager';
+  static const String appName = 'One-Room';
   static const String currencySymbol = '₹'; // change as needed
 }
 

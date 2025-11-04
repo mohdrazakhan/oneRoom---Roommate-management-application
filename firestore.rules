@@ -1,6 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Allow collection group queries on taskInstances where the caller is the assignee
+    // This ensures collectionGroup reads don't fail due to membership checks
+    match /{path=**}/taskInstances/{instanceId} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.assignedTo;
+    }
     
     // Helper function to check if user is authenticated
     function isSignedIn() {
@@ -24,6 +29,12 @@ service cloud.firestore {
       
       // No one can delete user profiles
       allow delete: if false;
+      
+      // FCM tokens subcollection (for push notifications)
+      match /tokens/{tokenId} {
+        // Users can read, create, update, and delete their own tokens
+        allow read, create, update, delete: if isSignedIn() && request.auth.uid == userId;
+      }
     }
     
     // Rooms collection
@@ -111,6 +122,26 @@ service cloud.firestore {
         
         // Prevent updates to maintain payment integrity
         allow update: if false;
+      }
+
+      // Task instances subcollection (scheduled task occurrences)
+      match /taskInstances/{instanceId} {
+        // Members can create task instances
+        allow create: if isMemberOfRoom(roomId);
+        
+        // Read task instances
+        // - Members of the room can read
+        // - Additionally, allow the assigned user to read their own instances even if no longer a member
+        //   This prevents collectionGroup queries filtered by assignedTo from failing due to stale data
+        allow read: if isMemberOfRoom(roomId) || (
+          isSignedIn() && request.auth.uid == resource.data.assignedTo
+        );
+        
+        // Members can update task instances (mark complete, swap assignments, etc.)
+        allow update: if isMemberOfRoom(roomId);
+        
+        // Members can delete task instances
+        allow delete: if isMemberOfRoom(roomId);
       }
 
       // Immutable Activity/Audit Log subcollection

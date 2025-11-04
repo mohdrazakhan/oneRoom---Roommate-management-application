@@ -4,10 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../providers/auth_provider.dart';
-import '../../providers/rooms_provider.dart';
 import '../../Models/user_profile.dart';
-import '../../services/user_profile_fixer.dart';
 import 'edit_profile_dialogs.dart';
 import 'change_password_dialog.dart';
 import 'about_screen.dart';
@@ -486,11 +485,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const Divider(height: 1),
           _buildProfileTile(
-            icon: Icons.refresh_rounded,
-            title: 'Fix User Names',
-            value: 'Update missing names in your rooms',
+            icon: Icons.system_update_rounded,
+            title: 'Update App',
+            value: 'Download the latest version',
             color: Colors.orange,
-            onTap: () => _fixUserNames(context),
+            onTap: () => _showUpdateDialog(context),
           ),
         ],
       ),
@@ -658,81 +657,84 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _fixUserNames(BuildContext context) async {
+  Future<void> _showUpdateDialog(BuildContext context) async {
+    // TODO: Replace this URL with your actual app download link
+    const String downloadUrl =
+        'https://github.com/mohdrazakhan/oneRoom---Roommate-management-application/releases/latest';
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Fix User Names'),
-        content: const Text(
-          'This will update your profile and all room members\' profiles to show proper names instead of IDs.\n\nThis is safe and can be run multiple times.',
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.system_update_rounded,
+                color: Colors.orange,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text('Update Available'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'A new version of One Room is available!',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Download the latest version to get new features, improvements, and bug fixes.',
+              style: TextStyle(fontSize: 14, color: Colors.black87),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: const Text('Later'),
           ),
-          TextButton(
+          FilledButton.icon(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Fix Names'),
+            icon: const Icon(Icons.download_rounded, size: 18),
+            label: const Text('Download'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
           ),
         ],
       ),
     );
 
-    if (confirmed != true || !mounted) return;
-
-    try {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Fixing user names...'),
-            ],
-          ),
-        ),
-      );
-
-      final fixer = UserProfileFixer();
-      final roomsProvider = context.read<RoomsProvider>();
-
-      // Fix current user first
-      await fixer.fixCurrentUserProfile();
-
-      // Fix all room members
-      if (roomsProvider.rooms.isNotEmpty) {
-        for (final room in roomsProvider.rooms) {
-          print('🔧 Fixing members in room: ${room.name}');
-          await fixer.fixRoomMembersProfiles(room.id);
+    if (confirmed == true) {
+      try {
+        final Uri url = Uri.parse(downloadUrl);
+        if (await canLaunchUrl(url)) {
+          await launchUrl(url, mode: LaunchMode.externalApplication);
+        } else {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Unable to open download link'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
-      }
-
-      if (mounted) {
-        // Close loading dialog
-        Navigator.pop(context);
-
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              '✅ All user names updated! Please restart the app to see changes.',
-            ),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 5),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
+        }
       }
     }
   }
