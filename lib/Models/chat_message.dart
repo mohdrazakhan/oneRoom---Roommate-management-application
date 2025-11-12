@@ -13,6 +13,15 @@ class ChatMessage {
   final String? mediaMime;
   final DateTime createdAt;
 
+  // Edit tracking
+  final bool edited;
+  final DateTime? editedAt;
+
+  // Soft delete tracking
+  final bool deleted;
+  final DateTime? deletedAt;
+  final String? deletedBy;
+
   // Poll payload
   final String? pollQuestion;
   final List<Map<String, dynamic>>?
@@ -36,6 +45,11 @@ class ChatMessage {
     this.mediaUrl,
     this.mediaMime,
     required this.createdAt,
+    this.edited = false,
+    this.editedAt,
+    this.deleted = false,
+    this.deletedAt,
+    this.deletedBy,
     this.pollQuestion,
     this.pollOptions,
     this.remindToUid,
@@ -77,6 +91,15 @@ class ChatMessage {
       createdAt: (data['createdAt'] is Timestamp)
           ? (data['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
+      edited: data['edited'] as bool? ?? false,
+      editedAt: data['editedAt'] is Timestamp
+          ? (data['editedAt'] as Timestamp).toDate()
+          : null,
+      deleted: data['deleted'] as bool? ?? false,
+      deletedAt: data['deletedAt'] is Timestamp
+          ? (data['deletedAt'] as Timestamp).toDate()
+          : null,
+      deletedBy: data['deletedBy'] as String?,
       pollQuestion: data['pollQuestion'] as String?,
       pollOptions: (data['pollOptions'] as List?)
           ?.map((e) => Map<String, dynamic>.from(e as Map))

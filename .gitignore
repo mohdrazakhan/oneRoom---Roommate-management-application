@@ -74,3 +74,9 @@ windows/flutter/ephemeral/
 # Logs & debug
 firestore-debug.log
 *.orig
+
+secure/
+*.json
+
+# Ignore local user SDK and credentials folder accidentally staged
+users/google-cloud-sdk/

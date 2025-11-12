@@ -19,7 +19,29 @@ class TaskCategory {
     required this.createdAt,
   });
 
-  IconData get icon => IconData(iconCodePoint, fontFamily: 'MaterialIcons');
+  // Tree-shaking friendly icon resolution:
+  // Avoid constructing IconData with a variable codePoint (non-constant) which breaks
+  // flutter's icon font tree shaking in release. Instead keep a static map of the
+  // IconData constants we allow and look them up by codePoint. All entries are const
+  // so the tree shaker can see and retain only the used glyphs.
+  static final Map<int, IconData> _iconDataByCodePoint = {
+    Icons.task_alt_rounded.codePoint: Icons.task_alt_rounded,
+    Icons.check_circle_outline.codePoint: Icons.check_circle_outline,
+    Icons.edit.codePoint: Icons.edit,
+    Icons.delete.codePoint: Icons.delete,
+    Icons.chat.codePoint: Icons.chat,
+    Icons.swap_horiz.codePoint: Icons.swap_horiz,
+    Icons.calendar_month.codePoint: Icons.calendar_month,
+    Icons.attach_money.codePoint: Icons.attach_money,
+    Icons.work.codePoint: Icons.work,
+    Icons.home.codePoint: Icons.home,
+    Icons.shopping_cart.codePoint: Icons.shopping_cart,
+    Icons.done_all.codePoint: Icons.done_all,
+    Icons.notifications.codePoint: Icons.notifications,
+  };
+
+  IconData get icon =>
+      _iconDataByCodePoint[iconCodePoint] ?? Icons.task_alt_rounded;
   Color get color => Color(colorValue);
 
   factory TaskCategory.fromFirestore(DocumentSnapshot doc) {

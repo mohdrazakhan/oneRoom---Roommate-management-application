@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // User profile photos
+    match /users/{userId}/profile.jpg {
+      // Users can read anyone's profile photo
+      allow read: if true;
+      
+      // Users can only upload/update their own profile photo
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Room photos
+    match /rooms/{roomId}/photo_{timestamp}.jpg {
+      // Anyone can read room photos
+      allow read: if true;
+      
+      // Only authenticated users can upload room photos
+      // (room membership check is done in client-side)
+      allow write: if isSignedIn();
+    }
+    
+    // Expense bill images
+    match /expenses/{roomId}/{filename} {
+      // Anyone can read expense bills
+      allow read: if true;
+      
+      // Only authenticated users can upload expense bills
+      allow write: if isSignedIn();
+    }
+    
+    // Chat media (images, videos, audio)
+    match /rooms/{roomId}/chat/{filename} {
+      // Anyone can read chat media
+      allow read: if true;
+      
+      // Only authenticated users can upload chat media
+      allow write: if isSignedIn();
+    }
+    
+    // Default deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

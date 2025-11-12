@@ -20,8 +20,39 @@ class ExpenseDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final firestoreService = Provider.of<FirestoreService>(context);
     final currentUser = FirebaseAuth.instance.currentUser!;
-    final category = ExpenseCategory.getCategory(expense.category);
 
+    return StreamBuilder<Expense?>(
+      stream: firestoreService.getExpenseStream(roomId, expense.id),
+      initialData: expense,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Expense Details')),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final currentExpense = snapshot.data!;
+        final category = ExpenseCategory.getCategory(currentExpense.category);
+
+        return _buildExpenseDetails(
+          context,
+          firestoreService,
+          currentUser,
+          currentExpense,
+          category,
+        );
+      },
+    );
+  }
+
+  Widget _buildExpenseDetails(
+    BuildContext context,
+    FirestoreService firestoreService,
+    User currentUser,
+    Expense currentExpense,
+    ExpenseCategory category,
+  ) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Expense Details'),
@@ -34,7 +65,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                 MaterialPageRoute(
                   builder: (context) => EnhancedModernExpenseScreen(
                     roomId: roomId,
-                    expense: expense,
+                    expense: currentExpense,
                   ),
                 ),
               );
@@ -53,11 +84,11 @@ class ExpenseDetailScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           // Receipt image (if available)
-          if (expense.receiptUrl != null) ...[
+          if (currentExpense.receiptUrl != null) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Image.network(
-                expense.receiptUrl!,
+                currentExpense.receiptUrl!,
                 height: 250,
                 width: double.infinity,
                 fit: BoxFit.cover,
@@ -103,7 +134,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '₹${expense.amount.toStringAsFixed(2)}',
+                      '₹${currentExpense.amount.toStringAsFixed(2)}',
                       style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
@@ -121,46 +152,27 @@ class ExpenseDetailScreen extends StatelessWidget {
           _buildInfoRow(
             context,
             'Description',
-            expense.description,
+            currentExpense.description,
             Icons.description,
           ),
           const SizedBox(height: 16),
 
-          // Payers (multi-payer aware)
+          // Paid By (multi-payer aware)
           ...(() {
-            final payers = expense.effectivePayers();
-
-            // Debug: Check if we have multi-payer data
-            print(
-              '🔍 Expense ${expense.id}: payers field = ${expense.payers}, effectivePayers = $payers',
-            );
-
-            if (payers.length <= 1) {
+            final payers = currentExpense.effectivePayers();
+            if (payers.isEmpty) {
               return [
-                FutureBuilder<String>(
-                  future: _getUserName(firestoreService, expense.paidBy),
-                  builder: (context, snapshot) {
-                    final paidByName = snapshot.data ?? 'Loading...';
-                    return _buildInfoRow(
-                      context,
-                      'Paid By',
-                      paidByName,
-                      Icons.person,
-                    );
-                  },
-                ),
+                _buildInfoRow(context, 'Paid By', 'Unknown', Icons.person),
                 const SizedBox(height: 16),
               ];
             }
-
-            // Show full contributor list
             return [
               Row(
                 children: [
                   const Icon(Icons.people, color: Colors.grey),
                   const SizedBox(width: 12),
                   Text(
-                    'Payers',
+                    'Paid By',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                       color: Colors.grey[700],
@@ -190,6 +202,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                             ),
                           ),
                           title: Text(name),
+                          subtitle: Text('Paid'),
                           trailing: Text(
                             '₹${amount.toStringAsFixed(2)}',
                             style: const TextStyle(
@@ -212,13 +225,14 @@ class ExpenseDetailScreen extends StatelessWidget {
           _buildInfoRow(
             context,
             'Date',
-            _formatDate(expense.createdAt),
+            _formatDate(currentExpense.createdAt),
             Icons.calendar_today,
           ),
 
-          if (expense.notes != null && expense.notes!.trim().isNotEmpty) ...[
+          if (currentExpense.notes != null &&
+              currentExpense.notes!.trim().isNotEmpty) ...[
             const SizedBox(height: 16),
-            _buildInfoRow(context, 'Notes', expense.notes!, Icons.note),
+            _buildInfoRow(context, 'Notes', currentExpense.notes!, Icons.note),
           ],
 
           const SizedBox(height: 24),
@@ -234,10 +248,10 @@ class ExpenseDetailScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          ...expense.splits.entries.map((entry) {
+          ...currentExpense.splits.entries.map((entry) {
             final uid = entry.key;
             final amount = entry.value;
-            final isSettled = expense.settledWith[uid] == true;
+            final isSettled = currentExpense.settledWith[uid] == true;
             final isCurrentUser = uid == currentUser.uid;
 
             return FutureBuilder<String>(
@@ -269,21 +283,39 @@ class ExpenseDetailScreen extends StatelessWidget {
                             fontSize: 16,
                           ),
                         ),
-                        if (isCurrentUser &&
-                            !isSettled &&
-                            uid != expense.paidBy) ...[
+                        if (isCurrentUser && uid != currentExpense.paidBy) ...[
                           const SizedBox(width: 8),
-                          FilledButton.tonal(
-                            onPressed: () =>
-                                _settleExpense(context, firestoreService, uid),
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
+                          if (!isSettled)
+                            FilledButton.tonal(
+                              onPressed: () => _settleExpense(
+                                context,
+                                firestoreService,
+                                uid,
                               ),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                              child: const Text('Settle'),
+                            )
+                          else
+                            OutlinedButton(
+                              onPressed: () => _unsettleExpense(
+                                context,
+                                firestoreService,
+                                uid,
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                foregroundColor: Colors.orange,
+                              ),
+                              child: const Text('Unsettle'),
                             ),
-                            child: const Text('Settle'),
-                          ),
                         ],
                       ],
                     ),
@@ -299,21 +331,25 @@ class ExpenseDetailScreen extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: expense.isFullySettled
+              color: currentExpense.isFullySettled
                   ? Colors.green[50]
                   : Colors.orange[50],
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: expense.isFullySettled ? Colors.green : Colors.orange,
+                color: currentExpense.isFullySettled
+                    ? Colors.green
+                    : Colors.orange,
               ),
             ),
             child: Row(
               children: [
                 Icon(
-                  expense.isFullySettled
+                  currentExpense.isFullySettled
                       ? Icons.check_circle
                       : Icons.access_time,
-                  color: expense.isFullySettled ? Colors.green : Colors.orange,
+                  color: currentExpense.isFullySettled
+                      ? Colors.green
+                      : Colors.orange,
                   size: 32,
                 ),
                 const SizedBox(width: 12),
@@ -322,21 +358,21 @@ class ExpenseDetailScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        expense.isFullySettled
+                        currentExpense.isFullySettled
                             ? 'Fully Settled'
                             : 'Pending Settlement',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
-                          color: expense.isFullySettled
+                          color: currentExpense.isFullySettled
                               ? Colors.green[900]
                               : Colors.orange[900],
                         ),
                       ),
-                      if (!expense.isFullySettled) ...[
+                      if (!currentExpense.isFullySettled) ...[
                         const SizedBox(height: 4),
                         Text(
-                          '${_getPendingCount()} members still need to settle',
+                          '${_getPendingCount(currentExpense)} members still need to settle',
                           style: TextStyle(color: Colors.orange[800]),
                         ),
                       ],
@@ -386,9 +422,9 @@ class ExpenseDetailScreen extends StatelessWidget {
     );
   }
 
-  int _getPendingCount() {
-    return expense.splits.entries.where((entry) {
-      return expense.settledWith[entry.key] != true;
+  int _getPendingCount(Expense exp) {
+    return exp.splits.entries.where((entry) {
+      return exp.settledWith[entry.key] != true;
     }).length;
   }
 
@@ -444,6 +480,53 @@ class ExpenseDetailScreen extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Expense settled successfully')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  Future<void> _unsettleExpense(
+    BuildContext context,
+    FirestoreService firestoreService,
+    String uid,
+  ) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unsettle Expense'),
+        content: const Text('Are you sure you want to mark this as unsettled?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Unsettle'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await firestoreService.unsettleExpense(
+        roomId: roomId,
+        expenseId: expense.id,
+        settlerUid: uid,
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Expense unsettled successfully')),
         );
       }
     } catch (e) {

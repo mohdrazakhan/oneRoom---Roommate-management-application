@@ -101,12 +101,23 @@ service cloud.firestore {
         allow read: if isMemberOfRoom(roomId);
         allow create: if isMemberOfRoom(roomId);
 
-        // Members can update chat messages (needed for poll voting, etc.)
-        // If you want stricter control, you can later restrict updates to specific fields.
-        allow update: if isMemberOfRoom(roomId);
+        // Members can update their own messages (for editing)
+        // Or update any message for poll voting
+        allow update: if isMemberOfRoom(roomId) && (
+          // allow vote updates on polls
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pollOptions']) ||
+          // allow edits only by the original sender (support legacy sender field names)
+          request.auth.uid == resource.data.senderId ||
+          request.auth.uid == resource.data.userId ||
+          request.auth.uid == resource.data.uid ||
+          request.auth.uid == resource.data.sentBy ||
+          request.auth.uid == resource.data.authorId
+        );
 
-        // Prevent deletions for now (keeps chat history immutable)
-        allow delete: if false;
+        // Temporarily allow any room member to delete any chat message
+        // to unblock message cleanup while we reconcile legacy data shapes.
+        // TODO: tighten to only author/recipient after data backfill.
+        allow delete: if isMemberOfRoom(roomId);
       }
 
       // Payments subcollection (cash settlements between members)
@@ -153,6 +164,34 @@ service cloud.firestore {
         allow create: if isMemberOfRoom(roomId);
         allow update, delete: if false;
       }
+    }
+    
+    // Notifications collection (top-level, not a subcollection)
+    match /notifications/{notificationId} {
+      // Users can only read their own notifications
+      allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
+      
+      // Any authenticated user can create notifications
+      // This allows the app to create notifications for other users
+      allow create: if isSignedIn() &&
+                       request.resource.data.userId is string &&
+                       request.resource.data.roomId is string &&
+                       request.resource.data.type is string &&
+                       request.resource.data.title is string &&
+                       request.resource.data.message is string &&
+                       request.resource.data.isRead == false &&
+                       request.resource.data.createdAt is timestamp;
+      
+      // Users can only update their own notifications
+      // Prevents changing roomId, userId, type, etc.
+      allow update: if isSignedIn() && 
+                       request.auth.uid == resource.data.userId &&
+                       request.resource.data.userId == resource.data.userId &&
+                       request.resource.data.roomId == resource.data.roomId &&
+                       request.resource.data.type == resource.data.type;
+      
+      // Users can only delete their own notifications
+      allow delete: if isSignedIn() && request.auth.uid == resource.data.userId;
     }
   }
 }

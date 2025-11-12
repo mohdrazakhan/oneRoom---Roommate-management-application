@@ -1,14 +1,30 @@
 // lib/services/notification_service.dart
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
+import '../services/navigation_service.dart';
+import '../app.dart';
+import '../screens/chat/chat_screen.dart';
+import '../screens/tasks/my_tasks_dashboard.dart';
+import '../screens/expenses/expenses_list_screen.dart';
 
 /// Top-level handler for background messages (must be top-level or static)
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Ensure Firebase is initialized in the background isolate
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    // Already initialized, ignore
+    if (!e.toString().contains('duplicate-app')) {
+      debugPrint('❌ Firebase init error in background: $e');
+    }
+  }
   debugPrint('📩 Background message: ${message.notification?.title}');
 }
 
@@ -46,6 +62,15 @@ class NotificationService {
       return;
     }
 
+    // Android 13+ runtime permission
+    if (Platform.isAndroid) {
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission();
+    }
+
     // Initialize local notifications for Android/iOS foreground display
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
@@ -65,6 +90,19 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
+    // Ensure Android notification channel exists (Android 8+)
+    const androidChannel = AndroidNotificationChannel(
+      'one_room_channel',
+      'One Room Notifications',
+      description: 'Notifications for room activities',
+      importance: Importance.high,
+    );
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(androidChannel);
+
     // Set up background message handler
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -75,20 +113,54 @@ class NotificationService {
     FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
     // Check if app was opened from a terminated state via notification
-    final initialMessage = await _messaging.getInitialMessage();
-    if (initialMessage != null) {
-      _handleMessageOpenedApp(initialMessage);
-    }
+    // Don't block startup on this; handle when it completes
+    // ignore: unawaited_futures
+    _messaging.getInitialMessage().then((initialMessage) {
+      if (initialMessage != null) {
+        _handleMessageOpenedApp(initialMessage);
+      }
+    });
 
     // Get FCM token and save to Firestore
-    await _saveTokenToFirestore();
+    // Save token in background
+    // ignore: unawaited_futures
+    _saveTokenToFirestore();
+
+    // Subscribe to all rooms the user is a member of so server triggers reach this device
+    // Subscribe to room topics in background (requires a quick Firestore query)
+    // ignore: unawaited_futures
+    _subscribeToAllMemberRooms();
 
     // Subscribe to "all_users" topic for broadcast notifications
-    await _messaging.subscribeToTopic('all_users');
+    // ignore: unawaited_futures
+    _messaging.subscribeToTopic('all_users');
     debugPrint('📢 Subscribed to all_users topic for broadcasts');
 
     // Listen for token refresh
     _messaging.onTokenRefresh.listen(_saveTokenToFirestore);
+  }
+
+  /// Subscribe to all rooms the current user is a member of
+  Future<void> _subscribeToAllMemberRooms() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final qs = await FirebaseFirestore.instance
+          .collection('rooms')
+          .where('members', arrayContains: user.uid)
+          .get();
+      for (final doc in qs.docs) {
+        final roomId = doc.id;
+        try {
+          await subscribeToRoom(roomId);
+        } catch (e) {
+          debugPrint('⚠️ Failed to subscribe to room_$roomId: $e');
+        }
+      }
+      debugPrint('📢 Subscribed to ${qs.docs.length} room topics');
+    } catch (e) {
+      debugPrint('⚠️ Failed to fetch rooms for topic subscription: $e');
+    }
   }
 
   /// Handle foreground messages by showing local notification
@@ -130,13 +202,87 @@ class NotificationService {
   /// Handle notification tap
   void _onNotificationTapped(NotificationResponse response) {
     debugPrint('🔔 Notification tapped: ${response.payload}');
-    // TODO: Navigate to relevant screen based on payload
+    if (response.payload == null) return;
+    _routeFromPayload(response.payload!);
   }
 
   /// Handle when user taps notification while app is in background
   void _handleMessageOpenedApp(RemoteMessage message) {
     debugPrint('🔔 App opened from notification: ${message.data}');
-    // TODO: Navigate to relevant screen based on message.data
+    _routeFromData(message.data);
+  }
+
+  void _routeFromPayload(String payload) {
+    // Payload was stored as message.data.toString(), which is not ideal for parsing.
+    // Try to recover simple key-value pairs.
+    final Map<String, String> data = {};
+    final trimmed = payload.replaceAll(RegExp(r'[{|}]'), '');
+    for (final part in trimmed.split(',')) {
+      final kv = part.split(':');
+      if (kv.length >= 2) {
+        data[kv[0].trim()] = kv.sublist(1).join(':').trim();
+      }
+    }
+    _routeFromData(data);
+  }
+
+  void _routeFromData(Map<String, dynamic> data) {
+    final nav = NavigationService().navigatorKey.currentState;
+    if (nav == null) return;
+
+    final rawType = data['type']?.toString();
+    // Normalize variants produced by helper and functions
+    final type = _normalizeType(rawType);
+    final roomId = data['roomId']?.toString();
+    final roomName = data['roomName']?.toString() ?? 'Room';
+
+    if (type == 'chat' && roomId != null) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(roomId: roomId, roomName: roomName),
+        ),
+      );
+      return;
+    }
+    if ((type == 'task' || type == 'swap') && roomId != null) {
+      nav.push(MaterialPageRoute(builder: (_) => const MyTasksDashboard()));
+      return;
+    }
+    if (type == 'expense' && roomId != null) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) =>
+              ExpensesListScreen(roomId: roomId, roomName: roomName),
+        ),
+      );
+      return;
+    }
+    // Default to dashboard
+    nav.pushNamed(MyApp.routeDashboard);
+  }
+
+  /// Map legacy / variant types to canonical routing categories
+  String? _normalizeType(String? t) {
+    if (t == null) return null;
+    switch (t) {
+      case 'chat':
+      case 'chat_message':
+        return 'chat';
+      case 'task':
+      case 'task_created':
+      case 'task_edited':
+      case 'task_deleted':
+      case 'task_reminder':
+      case 'swap':
+        return 'task';
+      case 'expense':
+      case 'expense_created':
+      case 'expense_edited':
+      case 'expense_deleted':
+        return 'expense';
+      default:
+        return t; // fallback unchanged
+    }
   }
 
   /// Save FCM token to Firestore for this user/device
@@ -162,6 +308,9 @@ class NotificationService {
           'lastUsed': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
   }
+
+  /// Public helper to ensure token is saved after login
+  Future<void> saveTokenForCurrentUser() => _saveTokenToFirestore();
 
   /// Remove token when user logs out
   Future<void> removeToken() async {

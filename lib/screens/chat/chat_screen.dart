@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../Models/chat_message.dart';
 import '../../Models/expense.dart';
+import '../../Models/payment.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/chat_service.dart';
 import '../../services/firestore_service.dart';
@@ -399,53 +400,131 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _showReminderDialog() async {
-    final toCtrl = TextEditingController();
-    final amtCtrl = TextEditingController();
-    await showDialog(
+    // First, get all room members
+    final roomDoc = await FirebaseFirestore.instance
+        .collection('rooms')
+        .doc(widget.roomId)
+        .get();
+
+    if (!roomDoc.exists) return;
+
+    // Get expenses and payments to calculate settlements
+    final firestoreService = FirestoreService();
+    final expenses = await firestoreService
+        .getExpensesStream(widget.roomId)
+        .first;
+    final paymentMaps = await firestoreService
+        .paymentsForRoom(widget.roomId)
+        .first;
+
+    final payments = paymentMaps.map((map) {
+      return Payment(
+        id: map['id'] ?? '',
+        roomId: map['roomId'] ?? '',
+        payerId: map['payerId'] ?? '',
+        receiverId: map['receiverId'] ?? '',
+        amount: (map['amount'] ?? 0).toDouble(),
+        note: map['note'],
+        createdAt: (map['createdAt'] as dynamic)?.toDate() ?? DateTime.now(),
+        createdBy: map['createdBy'] ?? '',
+      );
+    }).toList();
+
+    // Calculate balances and settlements
+    final balances = BalanceCalculator.calculateBalancesWithPayments(
+      expenses,
+      payments,
+    );
+    final settlements = BalanceCalculator.simplifySettlements(balances);
+
+    if (settlements.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No pending settlements'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    // Show dialog with suggested settlements
+    if (!mounted) return;
+    final selected = await showDialog<Settlement>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Payment Reminder'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: toCtrl,
-                decoration: const InputDecoration(labelText: 'To (UID)'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: amtCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(labelText: 'Amount'),
-              ),
-            ],
+          title: const Text('Send Payment Reminder'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: settlements.length,
+              itemBuilder: (context, index) {
+                final settlement = settlements[index];
+                return FutureBuilder<List<String>>(
+                  future: Future.wait([
+                    _getUserNameById(settlement.from),
+                    _getUserNameById(settlement.to),
+                  ]),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return const ListTile(title: Text('Loading...'));
+                    }
+
+                    final fromName = snapshot.data![0];
+                    final toName = snapshot.data![1];
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        title: Text('$fromName → $toName'),
+                        subtitle: Text(
+                          '₹${settlement.amount.toStringAsFixed(2)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        trailing: const Icon(Icons.arrow_forward),
+                        onTap: () => Navigator.pop(context, settlement),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
-            FilledButton(
-              onPressed: () async {
-                final to = toCtrl.text.trim();
-                final amt = double.tryParse(amtCtrl.text.trim());
-                if (to.isEmpty || amt == null) return;
-                Navigator.pop(context);
-                await _chat.sendReminder(
-                  roomId: widget.roomId,
-                  toUid: to,
-                  amount: amt,
-                );
-              },
-              child: const Text('Send'),
-            ),
           ],
         );
       },
     );
+
+    if (selected == null || !mounted) return;
+
+    // Send the reminder
+    await _chat.sendReminder(
+      roomId: widget.roomId,
+      toUid: selected.from,
+      amount: selected.amount,
+      note: 'Please pay ${await _getUserNameById(selected.to)}',
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Payment reminder sent!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<String> _getUserNameById(String uid) async {
+    final profile = await FirestoreService().getUserProfile(uid);
+    return profile?['displayName'] as String? ?? 'Unknown';
   }
 
   Future<void> _showLinkDialog() async {
@@ -591,6 +670,9 @@ class _Composer extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Media uploads disabled on Free plan
+              // Uncomment when upgraded to Blaze plan
+              /*
               ListTile(
                 leading: Icon(
                   Icons.image_rounded,
@@ -625,6 +707,7 @@ class _Composer extends StatelessWidget {
                 },
               ),
               const Divider(),
+              */
               ListTile(
                 leading: Icon(
                   Icons.poll_rounded,
@@ -733,6 +816,149 @@ class _MessageBubble extends StatelessWidget {
     this.onOpenLink,
   });
 
+  void _showMessageOptions(BuildContext context) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (message.type == ChatMessageType.text && isMe)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Edit Message'),
+                  onTap: () => Navigator.pop(context, 'edit'),
+                ),
+              if (isMe)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text(
+                    'Delete Message',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () => Navigator.pop(context, 'delete'),
+                ),
+              ListTile(
+                leading: const Icon(Icons.copy),
+                title: const Text('Copy Text'),
+                onTap: () => Navigator.pop(context, 'copy'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (choice == null || !context.mounted) return;
+
+    if (choice == 'edit') {
+      _editMessage(context);
+    } else if (choice == 'delete') {
+      _deleteMessage(context);
+    } else if (choice == 'copy') {
+      final text = message.text ?? '';
+      if (text.isNotEmpty) {
+        Clipboard.setData(ClipboardData(text: text));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Text copied')));
+      }
+    }
+  }
+
+  void _editMessage(BuildContext context) async {
+    final controller = TextEditingController(text: message.text);
+
+    final newText = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Message'),
+          content: TextField(
+            controller: controller,
+            maxLines: 5,
+            minLines: 1,
+            decoration: const InputDecoration(
+              hintText: 'Enter new message',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(context, controller.text);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (newText == null || newText.trim().isEmpty || !context.mounted) return;
+
+    try {
+      // Get roomId from message
+      await ChatService().editMessage(
+        roomId: message.roomId,
+        messageId: message.id,
+        newText: newText.trim(),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to edit: $e')));
+      }
+    }
+  }
+
+  void _deleteMessage(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete Message'),
+          content: const Text('Are you sure you want to delete this message?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await ChatService().deleteMessage(
+        roomId: message.roomId,
+        messageId: message.id,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bg = isMe
@@ -743,11 +969,28 @@ class _MessageBubble extends StatelessWidget {
     Widget child;
     switch (message.type) {
       case ChatMessageType.text:
-        child = Text(
-          message.text ?? '',
-          style: TextStyle(color: fg),
-          softWrap: true,
-          overflow: TextOverflow.visible,
+        child = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.text ?? '',
+              style: TextStyle(color: fg),
+              softWrap: true,
+              overflow: TextOverflow.visible,
+            ),
+            if (message.edited)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '(edited)',
+                  style: TextStyle(
+                    color: fg.withOpacity(0.6),
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+          ],
         );
         break;
       case ChatMessageType.image:
@@ -810,23 +1053,26 @@ class _MessageBubble extends StatelessWidget {
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.all(12),
-        constraints: BoxConstraints(
-          // Cap bubble width so long text wraps within screen
-          maxWidth: MediaQuery.of(context).size.width * 0.8,
-        ),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMe ? 16 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 16),
+      child: GestureDetector(
+        onLongPress: () => _showMessageOptions(context),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          constraints: BoxConstraints(
+            // Cap bubble width so long text wraps within screen
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
           ),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(16),
+              topRight: const Radius.circular(16),
+              bottomLeft: Radius.circular(isMe ? 16 : 4),
+              bottomRight: Radius.circular(isMe ? 4 : 16),
+            ),
+          ),
+          child: child,
         ),
-        child: child,
       ),
     );
   }

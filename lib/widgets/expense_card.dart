@@ -136,19 +136,25 @@ class ExpenseCard extends StatelessWidget {
                             color: Colors.grey[500],
                           ),
                           const SizedBox(width: 4),
-                          Text(
-                            dateText,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[500],
+                          Flexible(
+                            child: Text(
+                              dateText,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
                       ),
+                      const SizedBox(height: 4),
+                      // Settlement status badge on new line
+                      _buildSettlementBadge(),
                     ],
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 // Amount and actions
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -201,6 +207,59 @@ class ExpenseCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSettlementBadge() {
+    // Calculate settlement status
+    final totalMembers = expense.splits.length;
+    final settledCount = expense.settledWith.values
+        .where((v) => v == true)
+        .length;
+
+    String badgeText;
+    Color badgeColor;
+    IconData badgeIcon;
+
+    if (settledCount == totalMembers) {
+      // All settled
+      badgeText = 'All Settled';
+      badgeColor = Colors.green;
+      badgeIcon = Icons.check_circle;
+    } else if (settledCount > 0) {
+      // Partially settled
+      badgeText = 'Partially Settled';
+      badgeColor = Colors.orange;
+      badgeIcon = Icons.timelapse;
+    } else {
+      // Pending
+      badgeText = 'Pending';
+      badgeColor = Colors.grey;
+      badgeIcon = Icons.schedule;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: badgeColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: badgeColor.withValues(alpha: 0.3), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(badgeIcon, size: 10, color: badgeColor),
+          const SizedBox(width: 3),
+          Text(
+            badgeText,
+            style: TextStyle(
+              fontSize: 10,
+              color: badgeColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

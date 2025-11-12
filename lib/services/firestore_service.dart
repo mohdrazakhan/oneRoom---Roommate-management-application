@@ -3,6 +3,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../Models/expense.dart';
+import '../Models/room_notification.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -175,6 +176,8 @@ class FirestoreService {
     String? receiptUrl,
     DateTime? createdAt,
   }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
     final doc = expensesRef(roomId).doc();
     final payload = {
       'roomId': roomId,
@@ -193,6 +196,34 @@ class FirestoreService {
           : FieldValue.serverTimestamp(),
     };
     await doc.set(payload);
+
+    // Create notifications for all room members (except the creator)
+    if (currentUserId != null) {
+      final roomDoc = await _rooms.doc(roomId).get();
+      if (roomDoc.exists) {
+        final roomData = roomDoc.data() as Map<String, dynamic>;
+        final members = List<String>.from(roomData['members'] ?? []);
+        final actorProfile = await getUserProfile(currentUserId);
+        final actorName = actorProfile?['displayName'] ?? 'Someone';
+
+        for (final memberId in members) {
+          if (memberId != currentUserId) {
+            await createNotification(
+              roomId: roomId,
+              userId: memberId,
+              type: NotificationType.expenseAdded,
+              title: 'New Expense',
+              message:
+                  '$actorName added "$description" - ₹${amount.toStringAsFixed(2)}',
+              actorId: currentUserId,
+              actorName: actorName,
+              relatedId: doc.id,
+            );
+          }
+        }
+      }
+    }
+
     return doc.id;
   }
 
@@ -210,6 +241,8 @@ class FirestoreService {
     String? notes,
     String? receiptUrl,
   }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
     final updates = <String, dynamic>{};
     if (description != null) updates['description'] = description;
     if (amount != null) updates['amount'] = amount;
@@ -221,13 +254,43 @@ class FirestoreService {
     if (notes != null) updates['notes'] = notes;
     if (receiptUrl != null) updates['receiptUrl'] = receiptUrl;
     updates['updatedAt'] = FieldValue.serverTimestamp();
+
     if (updates.isNotEmpty) {
       await expensesRef(roomId).doc(expenseId).update(updates);
+
+      // Create notifications for all room members (except the updater)
+      if (currentUserId != null) {
+        final roomDoc = await _rooms.doc(roomId).get();
+        if (roomDoc.exists) {
+          final roomData = roomDoc.data() as Map<String, dynamic>;
+          final members = List<String>.from(roomData['members'] ?? []);
+          final actorProfile = await getUserProfile(currentUserId);
+          final actorName = actorProfile?['displayName'] ?? 'Someone';
+
+          final expenseDescription = description ?? 'an expense';
+
+          for (final memberId in members) {
+            if (memberId != currentUserId) {
+              await createNotification(
+                roomId: roomId,
+                userId: memberId,
+                type: NotificationType.expenseEdited,
+                title: 'Expense Updated',
+                message: '$actorName updated "$expenseDescription"',
+                actorId: currentUserId,
+                actorName: actorName,
+                relatedId: expenseId,
+              );
+            }
+          }
+        }
+      }
     }
   }
 
   /// Delete an expense document
   Future<void> deleteExpense(String roomId, String expenseId) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
     final expRef = expensesRef(roomId).doc(expenseId);
 
     // Fetch minimal info before deleting for the audit entry
@@ -263,6 +326,32 @@ class FirestoreService {
 
     // Delete the expense
     await expRef.delete();
+
+    // Create notifications for all room members (except the deleter)
+    if (currentUserId != null && description != null) {
+      final roomDoc = await _rooms.doc(roomId).get();
+      if (roomDoc.exists) {
+        final roomData = roomDoc.data() as Map<String, dynamic>;
+        final members = List<String>.from(roomData['members'] ?? []);
+        final actorProfile = await getUserProfile(currentUserId);
+        final actorName = actorProfile?['displayName'] ?? 'Someone';
+
+        for (final memberId in members) {
+          if (memberId != currentUserId) {
+            await createNotification(
+              roomId: roomId,
+              userId: memberId,
+              type: NotificationType.expenseDeleted,
+              title: 'Expense Deleted',
+              message: '$actorName deleted "$description"',
+              actorId: currentUserId,
+              actorName: actorName,
+              relatedId: expenseId,
+            );
+          }
+        }
+      }
+    }
 
     // Write immutable audit log entry (best-effort)
     try {
@@ -340,6 +429,58 @@ class FirestoreService {
     await expensesRef(
       roomId,
     ).doc(expenseId).update({'settledWith.$settlerUid': true});
+
+    // Add audit log entry
+    try {
+      final expenseDoc = await expensesRef(roomId).doc(expenseId).get();
+      final expenseData = expenseDoc.data() as Map<String, dynamic>?;
+      final description = expenseData?['description'] ?? 'Unknown expense';
+
+      await _rooms.doc(roomId).collection('auditLog').add({
+        'action': 'settled',
+        'performedBy': settlerUid,
+        'timestamp': FieldValue.serverTimestamp(),
+        'expenseDescription': description,
+      });
+    } catch (_) {
+      // Ignore audit failures so settle still succeeds
+    }
+  }
+
+  /// Mark an expense as unsettled for a specific member
+  Future<void> unsettleExpense({
+    required String roomId,
+    required String expenseId,
+    required String settlerUid,
+  }) async {
+    await expensesRef(
+      roomId,
+    ).doc(expenseId).update({'settledWith.$settlerUid': false});
+
+    // Add audit log entry
+    try {
+      final expenseDoc = await expensesRef(roomId).doc(expenseId).get();
+      final expenseData = expenseDoc.data() as Map<String, dynamic>?;
+      final description = expenseData?['description'] ?? 'Unknown expense';
+
+      await _rooms.doc(roomId).collection('auditLog').add({
+        'action': 'unsettled',
+        'performedBy': settlerUid,
+        'timestamp': FieldValue.serverTimestamp(),
+        'expenseDescription': description,
+      });
+    } catch (_) {
+      // Ignore audit failures so unsettle still succeeds
+    }
+  }
+
+  /// Get a single expense as a stream for real-time updates
+  Stream<Expense?> getExpenseStream(String roomId, String expenseId) {
+    return expensesRef(roomId).doc(expenseId).snapshots().map((snapshot) {
+      if (!snapshot.exists) return null;
+      final data = snapshot.data() as Map<String, dynamic>;
+      return Expense.fromMap(data, snapshot.id);
+    });
   }
 
   /// Get room as a Map (for accessing member UIDs)
@@ -672,6 +813,9 @@ class FirestoreService {
     final requesterProfile = await getUserProfile(currentUserId);
     final targetProfile = await getUserProfile(targetUserId);
 
+    final requesterName = requesterProfile?['displayName'] ?? 'Member';
+    final targetName = targetProfile?['displayName'] ?? 'Member';
+
     await _rooms
         .doc(roomId)
         .collection('taskInstances')
@@ -679,13 +823,30 @@ class FirestoreService {
         .update({
           'swapRequest': {
             'requesterId': currentUserId,
-            'requesterName': requesterProfile?['displayName'] ?? 'Member',
+            'requesterName': requesterName,
             'targetId': targetUserId,
-            'targetName': targetProfile?['displayName'] ?? 'Member',
+            'targetName': targetName,
             'status': 'pending',
             'createdAt': FieldValue.serverTimestamp(),
           },
         });
+
+    // Create notification for the target user
+    try {
+      await createNotification(
+        roomId: roomId,
+        userId: targetUserId,
+        type: NotificationType.taskSwapRequest,
+        title: 'Task Swap Request',
+        message: '$requesterName wants to swap tasks with you',
+        actorId: currentUserId,
+        actorName: requesterName,
+        taskInstanceId: taskInstanceId,
+      );
+      print('✅ Swap request notification created for user: $targetUserId');
+    } catch (e) {
+      print('❌ Error creating swap notification: $e');
+    }
   }
 
   /// Respond to a swap request
@@ -694,6 +855,9 @@ class FirestoreService {
     required String taskInstanceId,
     required bool approve,
   }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) throw Exception('User not logged in');
+
     final taskInstanceRef = _rooms
         .doc(roomId)
         .collection('taskInstances')
@@ -707,8 +871,13 @@ class FirestoreService {
 
     if (swapRequest == null) throw Exception('No swap request found');
 
+    final requesterId = swapRequest['requesterId'];
+
+    // Get current user's name
+    final currentUserProfile = await getUserProfile(currentUserId);
+    final currentUserName = currentUserProfile?['displayName'] ?? 'Member';
+
     if (approve) {
-      final requesterId = swapRequest['requesterId'];
       final currentAssignee = taskData['assignedTo'];
 
       // Swap the assignees
@@ -733,11 +902,75 @@ class FirestoreService {
           'assignedTo': currentAssignee,
         });
       }
+
+      // Create notification for the requester
+      await createNotification(
+        roomId: roomId,
+        userId: requesterId,
+        type: NotificationType.taskSwapApproved,
+        title: 'Swap Request Approved',
+        message: '$currentUserName approved your swap request',
+        actorId: currentUserId,
+        actorName: currentUserName,
+        taskInstanceId: taskInstanceId,
+      );
+      // Update the original swap request notification for the approver to show decision
+      await _updateSwapRequestNotificationStatus(
+        roomId: roomId,
+        userId: currentUserId,
+        taskInstanceId: taskInstanceId,
+        decision: 'approved',
+      );
     } else {
       await taskInstanceRef.update({
         'swapRequest.status': 'rejected',
         'swapRequest.rejectedAt': FieldValue.serverTimestamp(),
       });
+
+      // Create notification for the requester
+      await createNotification(
+        roomId: roomId,
+        userId: requesterId,
+        type: NotificationType.taskSwapRejected,
+        title: 'Swap Request Rejected',
+        message: '$currentUserName rejected your swap request',
+        actorId: currentUserId,
+        actorName: currentUserName,
+        taskInstanceId: taskInstanceId,
+      );
+      await _updateSwapRequestNotificationStatus(
+        roomId: roomId,
+        userId: currentUserId,
+        taskInstanceId: taskInstanceId,
+        decision: 'rejected',
+      );
+    }
+  }
+
+  /// Update a pending swap request notification (for responder) with decision metadata
+  Future<void> _updateSwapRequestNotificationStatus({
+    required String roomId,
+    required String userId,
+    required String taskInstanceId,
+    required String decision,
+  }) async {
+    try {
+      final q = await _notificationsRef()
+          .where('roomId', isEqualTo: roomId)
+          .where('userId', isEqualTo: userId)
+          .where('taskInstanceId', isEqualTo: taskInstanceId)
+          .where('type', isEqualTo: NotificationType.taskSwapRequest.name)
+          .limit(1)
+          .get();
+      if (q.docs.isEmpty) return;
+      await q.docs.first.reference.update({
+        'swapDecision': decision,
+        'decisionAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      // ignore failure so core flow still works
+      // ignore: avoid_print
+      print('Swap notification status update failed: $e');
     }
   }
 
@@ -1007,5 +1240,135 @@ class FirestoreService {
       if (!completed) count++;
     }
     return count;
+  }
+
+  /// ---------------------------
+  /// NOTIFICATIONS
+  /// ---------------------------
+
+  /// Get the notifications collection reference
+  CollectionReference _notificationsRef() => _db.collection('notifications');
+
+  /// Create a notification
+  Future<void> createNotification({
+    required String roomId,
+    required String userId,
+    required NotificationType type,
+    required String title,
+    required String message,
+    String? actorId,
+    String? actorName,
+    String? relatedId,
+    String? taskInstanceId,
+    Map<String, dynamic>? additionalData,
+  }) async {
+    final notification = RoomNotification(
+      id: '',
+      roomId: roomId,
+      userId: userId,
+      type: type,
+      title: title,
+      message: message,
+      isRead: false,
+      createdAt: DateTime.now(),
+      actorId: actorId,
+      actorName: actorName,
+      relatedId: relatedId,
+      taskInstanceId: taskInstanceId,
+      additionalData: additionalData,
+    );
+
+    print(
+      '📝 Creating notification: $title for user: $userId in room: $roomId',
+    );
+    await _notificationsRef().add(notification.toMap());
+    print('✅ Notification created successfully in Firestore');
+  }
+
+  /// Stream notifications for a user in a specific room
+  Stream<List<RoomNotification>> getNotificationsStream({
+    required String roomId,
+    required String userId,
+    bool unreadOnly = false,
+  }) {
+    // Simplified query to avoid composite index initially
+    // We'll filter and sort in memory
+    Query query = _notificationsRef()
+        .where('roomId', isEqualTo: roomId)
+        .where('userId', isEqualTo: userId);
+
+    if (unreadOnly) {
+      query = query.where('isRead', isEqualTo: false);
+    }
+
+    return query.snapshots().map((snapshot) {
+      final notifications = snapshot.docs
+          .map((doc) => RoomNotification.fromFirestore(doc))
+          .toList();
+
+      // Sort by createdAt in memory (descending - newest first)
+      notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      // Limit to 50
+      return notifications.take(50).toList();
+    });
+  }
+
+  /// Get unread notification count for a room
+  Stream<int> getUnreadNotificationCount({
+    required String roomId,
+    required String userId,
+  }) {
+    return _notificationsRef()
+        .where('roomId', isEqualTo: roomId)
+        .where('userId', isEqualTo: userId)
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
+  }
+
+  /// Mark a notification as read
+  Future<void> markNotificationAsRead(String notificationId) async {
+    await _notificationsRef().doc(notificationId).update({'isRead': true});
+  }
+
+  /// Mark all notifications as read for a room
+  Future<void> markAllNotificationsAsRead({
+    required String roomId,
+    required String userId,
+  }) async {
+    final snapshot = await _notificationsRef()
+        .where('roomId', isEqualTo: roomId)
+        .where('userId', isEqualTo: userId)
+        .where('isRead', isEqualTo: false)
+        .get();
+
+    final batch = _db.batch();
+    for (var doc in snapshot.docs) {
+      batch.update(doc.reference, {'isRead': true});
+    }
+    await batch.commit();
+  }
+
+  /// Delete a notification
+  Future<void> deleteNotification(String notificationId) async {
+    await _notificationsRef().doc(notificationId).delete();
+  }
+
+  /// Delete all notifications for a room
+  Future<void> deleteAllNotifications({
+    required String roomId,
+    required String userId,
+  }) async {
+    final snapshot = await _notificationsRef()
+        .where('roomId', isEqualTo: roomId)
+        .where('userId', isEqualTo: userId)
+        .get();
+
+    final batch = _db.batch();
+    for (var doc in snapshot.docs) {
+      batch.delete(doc.reference);
+    }
+    await batch.commit();
   }
 }

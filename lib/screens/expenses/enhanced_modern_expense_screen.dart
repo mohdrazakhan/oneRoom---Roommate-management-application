@@ -42,6 +42,9 @@ class _EnhancedModernExpenseScreenState
   List<String> _members = [];
   Map<String, String> _memberNames = {}; // uid -> displayName
 
+  // Track custom categories created in this session
+  final List<ExpenseCategory> _customCategories = [];
+
   // Multiple payers: key=uid, value=amount they paid
   final Map<String, TextEditingController> _paidBy = {};
 
@@ -1100,6 +1103,20 @@ class _EnhancedModernExpenseScreenState
                 );
                 return;
               }
+
+              // Check for duplicates
+              final allCategories = [
+                ...ExpenseCategory.categories.map((c) => c.name.toLowerCase()),
+                ..._customCategories.map((c) => c.name.toLowerCase()),
+              ];
+
+              if (allCategories.contains(name.toLowerCase())) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Category "$name" already exists')),
+                );
+                return;
+              }
+
               Navigator.pop(context, {
                 'name': name,
                 'emoji': emoji.isEmpty ? '🏷️' : emoji,
@@ -1112,7 +1129,14 @@ class _EnhancedModernExpenseScreenState
     );
 
     if (result != null) {
+      // Add to custom categories list
+      final newCategory = ExpenseCategory.createCustom(
+        result['name']!,
+        result['emoji']!,
+      );
+
       setState(() {
+        _customCategories.add(newCategory);
         _category = result['name']!;
       });
     }
@@ -1339,7 +1363,7 @@ class _EnhancedModernExpenseScreenState
 
             // Category
             DropdownButtonFormField<String>(
-              initialValue: _category,
+              value: _category,
               decoration: InputDecoration(
                 labelText: 'Category',
                 prefixIcon: const Icon(Icons.category_outlined),
@@ -1350,6 +1374,7 @@ class _EnhancedModernExpenseScreenState
                 fillColor: Colors.white,
               ),
               items: [
+                // Default categories
                 ...ExpenseCategory.categories.map(
                   (cat) => DropdownMenuItem(
                     value: cat.name,
@@ -1358,6 +1383,21 @@ class _EnhancedModernExpenseScreenState
                         Text(cat.icon, style: const TextStyle(fontSize: 20)),
                         const SizedBox(width: 8),
                         Text(cat.name),
+                      ],
+                    ),
+                  ),
+                ),
+                // Custom categories created in this session
+                ..._customCategories.map(
+                  (cat) => DropdownMenuItem(
+                    value: cat.name,
+                    child: Row(
+                      children: [
+                        Text(cat.icon, style: const TextStyle(fontSize: 20)),
+                        const SizedBox(width: 8),
+                        Text(cat.name),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.star, size: 12, color: Colors.amber),
                       ],
                     ),
                   ),

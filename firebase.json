@@ -1,19 +1,25 @@
 {
+  "functions": {
+    "source": "functions"
+  },
   "firestore": {
     "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
   },
   "flutter": {
     "platforms": {
       "android": {
         "default": {
-          "projectId": "one-room-b42b0",
+          "projectId": "one-room-56ea2",
           "appId": "1:470027033928:android:8dc84d57ef28373b50277d",
           "fileOutput": "android/app/google-services.json"
         }
       },
       "ios": {
         "default": {
-          "projectId": "one-room-b42b0",
+          "projectId": "one-room-56ea2",
           "appId": "1:470027033928:ios:b8c2f9dd93bbb24550277d",
           "uploadDebugSymbols": false,
           "fileOutput": "ios/Runner/GoogleService-Info.plist"
@@ -21,7 +27,7 @@
       },
       "macos": {
         "default": {
-          "projectId": "one-room-b42b0",
+          "projectId": "one-room-56ea2",
           "appId": "1:470027033928:ios:b8c2f9dd93bbb24550277d",
           "uploadDebugSymbols": false,
           "fileOutput": "macos/Runner/GoogleService-Info.plist"

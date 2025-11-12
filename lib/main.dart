@@ -14,13 +14,27 @@ import 'app.dart'; // contains MyApp + AuthWrapper + routes
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Initialize Firebase (with duplicate check)
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // If already initialized (e.g., hot restart), ignore the error
+    if (e.toString().contains('duplicate-app')) {
+      debugPrint('⚠️ Firebase already initialized (hot restart detected)');
+    } else {
+      rethrow;
+    }
+  }
 
-  // Initialize notification service
-  await NotificationService().initialize();
-
+  // Start the app first so UI appears immediately
   runApp(const RootApp());
+
+  // Initialize notifications after first frame (non-blocking)
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    NotificationService().initialize();
+  });
 }
 
 class RootApp extends StatelessWidget {

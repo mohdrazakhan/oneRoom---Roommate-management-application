@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../constants.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/notification_service.dart';
 import '../../Models/room.dart';
 import '../../Models/user_profile.dart';
 import '../expenses/expenses_list_screen.dart';
@@ -36,6 +37,18 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Subscribe this device to the room topic to receive pushes for chats, tasks, and expenses
+    // Note: We intentionally do NOT unsubscribe on dispose so the user continues to receive
+    // room notifications while a member. Unsubscribe when leaving the room.
+    try {
+      // Lazy import to avoid heavier import graph at top
+      // ignore: avoid_dynamic_calls
+      Future.microtask(() async {
+        // Defer to ensure widget fields are initialized
+        final notificationService = NotificationService();
+        await notificationService.subscribeToRoom(widget.roomId);
+      });
+    } catch (_) {}
   }
 
   @override
@@ -75,6 +88,10 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
   Future<void> _leaveRoom(String uid) async {
     try {
       await _fs.leaveRoom(widget.roomId, uid);
+      // Unsubscribe from room topic upon leaving
+      try {
+        await NotificationService().unsubscribeFromRoom(widget.roomId);
+      } catch (_) {}
       _showMsg('You left the room');
       // After leaving, navigate back to dashboard
       if (mounted) Navigator.pop(context);

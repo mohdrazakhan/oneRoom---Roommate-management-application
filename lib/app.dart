@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 
 import 'providers/auth_provider.dart';
 import 'providers/rooms_provider.dart';
+import 'services/navigation_service.dart';
+import 'services/notification_service.dart';
 
 // Screens (adjust imports if your paths differ)
 import 'screens/auth/login_screen.dart';
@@ -114,6 +116,7 @@ class MyApp extends StatelessWidget {
       title: 'One-Room',
       debugShowCheckedModeBanner: false,
       theme: baseTheme,
+      navigatorKey: NavigationService().navigatorKey,
 
       // The top-level navigator uses AuthWrapper to decide initial screen based on auth state.
       home: const AuthWrapper(),
@@ -235,6 +238,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
 
     // Signed in -> show dashboard
+    // Ensure FCM token is saved after login
+    NotificationService().saveTokenForCurrentUser();
+    // Re-subscribe to all member rooms in case membership changed while signed out
+    NotificationService()
+        .initialize(); // safe: initialize() short-circuits if already initialized
     return const DashboardScreen();
   }
 }

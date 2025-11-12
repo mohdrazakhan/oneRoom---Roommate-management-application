@@ -6,6 +6,8 @@ import '../Models/expense.dart';
 import '../services/firestore_service.dart';
 import '../utils/formatters.dart';
 import '../providers/auth_provider.dart';
+import '../screens/notifications/room_notifications_screen.dart';
+import '../Models/payment.dart';
 
 class RoomCard extends StatelessWidget {
   final Room room;
@@ -130,6 +132,8 @@ class RoomCard extends StatelessWidget {
                             ],
                           ),
                         ),
+                        // Notification icon with badge
+                        _NotificationBadge(roomId: room.id),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -340,16 +344,55 @@ class _MyBalanceChip extends StatelessWidget {
     ).firebaseUser?.uid;
     if (uid == null || uid.isEmpty) return const SizedBox.shrink();
 
+    // Include payments in the balance shown on the home card so it's consistent
+    // with the Balances screen. We first listen to expenses, then combine with
+    // payments and compute the net using BalanceCalculator.calculateBalancesWithPayments.
     return StreamBuilder<List<Expense>>(
       stream: FirestoreService().getExpensesStream(roomId),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox.shrink();
-        final expenses = snapshot.data!;
-        if (expenses.isEmpty) return const SizedBox.shrink();
+      builder: (context, expenseSnapshot) {
+        if (!expenseSnapshot.hasData) return const SizedBox.shrink();
+        final expenses = expenseSnapshot.data!;
 
-        final balances = BalanceCalculator.calculateBalances(expenses);
-        final net = balances[uid] ?? 0.0;
-        return _buildBalanceChip(context, net);
+        return StreamBuilder<List<Map<String, dynamic>>>(
+          stream: FirestoreService().paymentsForRoom(roomId),
+          builder: (context, paymentSnapshot) {
+            if (!paymentSnapshot.hasData) {
+              // If we at least have expenses, show the old calculation while payments load.
+              if (expenses.isEmpty) return const SizedBox.shrink();
+              final balances = BalanceCalculator.calculateBalances(expenses);
+              final net = balances[uid] ?? 0.0;
+              return _buildBalanceChip(context, net);
+            }
+
+            final paymentMaps = paymentSnapshot.data!;
+            final payments = paymentMaps
+                .map(
+                  (m) => Payment(
+                    id: m['id'] ?? '',
+                    roomId: m['roomId'] ?? '',
+                    payerId: m['payerId'] ?? '',
+                    receiverId: m['receiverId'] ?? '',
+                    amount: (m['amount'] ?? 0).toDouble(),
+                    note: m['note'],
+                    createdAt:
+                        (m['createdAt'] as dynamic)?.toDate() ?? DateTime.now(),
+                    createdBy: m['createdBy'] ?? '',
+                  ),
+                )
+                .toList();
+
+            if (expenses.isEmpty && payments.isEmpty) {
+              return const SizedBox.shrink();
+            }
+
+            final balances = BalanceCalculator.calculateBalancesWithPayments(
+              expenses,
+              payments,
+            );
+            final net = balances[uid] ?? 0.0;
+            return _buildBalanceChip(context, net);
+          },
+        );
       },
     );
   }
@@ -395,5 +438,111 @@ class _MyBalanceChip extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _NotificationBadge extends StatelessWidget {
+  final String roomId;
+
+  const _NotificationBadge({required this.roomId});
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = Provider.of<AuthProvider>(
+      context,
+      listen: false,
+    ).firebaseUser?.uid;
+
+    if (uid == null || uid.isEmpty) return const SizedBox.shrink();
+
+    return StreamBuilder<int>(
+      stream: FirestoreService().getUnreadNotificationCount(
+        roomId: roomId,
+        userId: uid,
+      ),
+      builder: (context, snapshot) {
+        final unreadCount = snapshot.data ?? 0;
+
+        // Debug logging
+        if (snapshot.hasError) {
+          print('❌ Error getting notification count: ${snapshot.error}');
+        }
+        if (snapshot.hasData) {
+          print('🔔 Notification count for room $roomId: $unreadCount');
+        }
+
+        return InkWell(
+          onTap: () => _openNotifications(context),
+          borderRadius: BorderRadius.circular(12),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.notifications_rounded,
+                  size: 24,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              if (unreadCount > 0)
+                Positioned(
+                  right: -4,
+                  top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(
+                      minWidth: 20,
+                      minHeight: 20,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        unreadCount > 99 ? '99+' : unreadCount.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _openNotifications(BuildContext context) async {
+    // Get the room object from Firestore
+    final roomSnapshot = await FirestoreService().streamRoomById(roomId).first;
+
+    if (roomSnapshot == null) return;
+
+    // We need to import Room model and convert the map to Room
+    final room = Room.fromMap(roomSnapshot, roomSnapshot['id']);
+
+    if (context.mounted) {
+      // Import the notifications screen at the top of this file
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => RoomNotificationsScreen(room: room),
+        ),
+      );
+    }
   }
 }

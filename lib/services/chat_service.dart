@@ -4,7 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../Models/chat_message.dart';
+import '../Models/room_notification.dart';
 import 'notification_helper.dart';
+import 'firestore_service.dart';
 
 class ChatService {
   final _db = FirebaseFirestore.instance;
@@ -25,6 +27,7 @@ class ChatService {
                 (d) =>
                     ChatMessage.fromDoc(d.id, d.data() as Map<String, dynamic>),
               )
+              .where((m) => m.deleted != true)
               .toList(),
         );
   }
@@ -50,6 +53,28 @@ class ChatService {
         roomName: roomName,
         messagePreview: preview,
       );
+
+      // Create in-app notifications for all room members except sender
+      if (roomDoc.exists) {
+        final roomData = roomDoc.data() as Map<String, dynamic>;
+        final members = List<String>.from(roomData['members'] ?? []);
+        final senderProfile = await FirestoreService().getUserProfile(uid);
+        final senderName = senderProfile?['displayName'] ?? 'Someone';
+
+        for (final memberId in members) {
+          if (memberId != uid) {
+            await FirestoreService().createNotification(
+              roomId: roomId,
+              userId: memberId,
+              type: NotificationType.chatMessage,
+              title: 'New Message',
+              message: '$senderName: $preview',
+              actorId: uid,
+              actorName: senderName,
+            );
+          }
+        }
+      }
     } catch (e) {
       // Don't block message send if notification fails
       print('sendText: notification failed -> $e');
@@ -175,6 +200,57 @@ class ChatService {
       'linkId': linkId,
       if (previewText != null && previewText.isNotEmpty) 'text': previewText,
       'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Edit a text message (only by the sender)
+  Future<void> editMessage({
+    required String roomId,
+    required String messageId,
+    required String newText,
+  }) async {
+    final uid = _auth.currentUser?.uid ?? '';
+    final msgRef = _roomChatRef(roomId).doc(messageId);
+    final snap = await msgRef.get();
+
+    if (!snap.exists) throw Exception('Message not found');
+
+    final data = snap.data() as Map<String, dynamic>;
+    if (data['senderId'] != uid) {
+      throw Exception('You can only edit your own messages');
+    }
+
+    if (data['type'] != 'text') {
+      throw Exception('Only text messages can be edited');
+    }
+
+    await msgRef.update({
+      'text': newText.trim(),
+      'edited': true,
+      'editedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Delete a message (only by the sender)
+  Future<void> deleteMessage({
+    required String roomId,
+    required String messageId,
+  }) async {
+    final uid = _auth.currentUser?.uid ?? '';
+    final msgRef = _roomChatRef(roomId).doc(messageId);
+    final snap = await msgRef.get();
+
+    if (!snap.exists) throw Exception('Message not found');
+
+    final data = snap.data() as Map<String, dynamic>;
+    if (data['senderId'] != uid) {
+      throw Exception('You can only delete your own messages');
+    }
+    // Soft delete instead of hard delete to avoid rules conflicts and keep audit trail
+    await msgRef.update({
+      'deleted': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+      'deletedBy': uid,
     });
   }
 }
