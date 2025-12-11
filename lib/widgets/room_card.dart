@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // lib/widgets/room_card.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

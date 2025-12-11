@@ -115,7 +115,7 @@ class _CreateCategorySheetState extends State<CreateCategorySheet>
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: _selectedColor.withOpacity(0.1),
+                            color: _selectedColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Icon(
@@ -201,7 +201,7 @@ class _CreateCategorySheetState extends State<CreateCategorySheet>
                               duration: const Duration(milliseconds: 200),
                               decoration: BoxDecoration(
                                 color: isSelected
-                                    ? _selectedColor.withOpacity(0.15)
+                                    ? _selectedColor.withValues(alpha: 0.15)
                                     : Colors.grey[100],
                                 borderRadius: BorderRadius.circular(12),
                                 border: isSelected
@@ -259,7 +259,7 @@ class _CreateCategorySheetState extends State<CreateCategorySheet>
                                 boxShadow: isSelected
                                     ? [
                                         BoxShadow(
-                                          color: color.withOpacity(0.4),
+                                          color: color.withValues(alpha: 0.4),
                                           blurRadius: 8,
                                           spreadRadius: 2,
                                         ),

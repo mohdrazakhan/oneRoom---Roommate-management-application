@@ -1,5 +1,6 @@
 // Temporary debug script to check task data
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 Future<void> debugTasks() async {
   final db = FirebaseFirestore.instance;
@@ -8,7 +9,7 @@ Future<void> debugTasks() async {
   final roomsSnapshot = await db.collection('rooms').get();
 
   for (var roomDoc in roomsSnapshot.docs) {
-    print('\n=== Room: ${roomDoc.id} (${roomDoc.data()['name']}) ===');
+    debugPrint('\n=== Room: ${roomDoc.id} (${roomDoc.data()['name']}) ===');
 
     // Get all tasks for this room
     final tasksSnapshot = await db
@@ -19,11 +20,11 @@ Future<void> debugTasks() async {
 
     for (var taskDoc in tasksSnapshot.docs) {
       final data = taskDoc.data();
-      print('Task ID: ${taskDoc.id}');
-      print('  Title: ${data['title']}');
-      print('  Name: ${data['name']}');
-      print('  All fields: ${data.keys.toList()}');
-      print('---');
+      debugPrint('Task ID: ${taskDoc.id}');
+      debugPrint('  Title: ${data['title']}');
+      debugPrint('  Name: ${data['name']}');
+      debugPrint('  All fields: ${data.keys.toList()}');
+      debugPrint('---');
     }
   }
 }

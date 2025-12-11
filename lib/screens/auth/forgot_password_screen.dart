@@ -56,8 +56,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.primary.withOpacity(0.12),
-              Theme.of(context).colorScheme.secondary.withOpacity(0.10),
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.10),
             ],
           ),
         ),
@@ -85,7 +85,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       shape: BoxShape.circle,
                       color: Theme.of(
                         context,
-                      ).colorScheme.primary.withOpacity(0.1),
+                      ).colorScheme.primary.withValues(alpha: 0.1),
                     ),
                     child: Icon(
                       Icons.lock_reset_rounded,

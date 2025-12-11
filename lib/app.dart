@@ -167,82 +167,63 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  VoidCallback? _authListener;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    // Remove previous listener if any
-    _authListener?.call();
-
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final roomsProvider = Provider.of<RoomsProvider>(context, listen: false);
-
-    // Start/stop listening immediately based on current auth state
-    if (!authProvider.isLoading && authProvider.firebaseUser != null) {
-      roomsProvider.startListening(authProvider.firebaseUser!.uid);
-    } else {
-      roomsProvider.stopListening();
-    }
-
-    // Set up a listener so we react to future auth changes
-    _authListener = () {
-      // no-op wrapper for removal convenience
-    };
-
-    // Instead of storing VoidCallback returned by addListener (not returned),
-    // we directly add a listener and keep a flag to remove it on dispose.
-    authProvider.addListener(_onAuthChanged);
-  }
-
-  void _onAuthChanged() {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final roomsProvider = Provider.of<RoomsProvider>(context, listen: false);
-
-    if (authProvider.firebaseUser != null) {
-      // start listening to rooms for this user
-      roomsProvider.startListening(authProvider.firebaseUser!.uid);
-    } else {
-      // stop listening when signed out
-      roomsProvider.stopListening();
-    }
-
-    // Trigger rebuild to show the right screen if needed
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    // Remove the listener we added to AuthProvider
-    try {
-      Provider.of<AuthProvider>(
-        context,
-        listen: false,
-      ).removeListener(_onAuthChanged);
-    } catch (_) {}
-    super.dispose();
-  }
+  String? _lastInitializedUid; // Track last initialized user
 
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
+    final roomsProvider = Provider.of<RoomsProvider>(context, listen: false);
+
+    debugPrint(
+      '🔐 AuthWrapper build: isLoading=${auth.isLoading}, user=${auth.firebaseUser?.uid}, _lastInitializedUid=$_lastInitializedUid',
+    );
 
     if (auth.isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (auth.firebaseUser == null) {
-      // Not signed in -> show login screen
+      // Not signed in -> stop rooms listener and show login
+      if (_lastInitializedUid != null) {
+        debugPrint('🔐 User signed out, stopping rooms listener');
+        _lastInitializedUid = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          roomsProvider.stopListening();
+        });
+      }
       return const LoginScreen();
     }
 
     // Signed in -> show dashboard
-    // Ensure FCM token is saved after login
-    NotificationService().saveTokenForCurrentUser();
-    // Re-subscribe to all member rooms in case membership changed while signed out
-    NotificationService()
-        .initialize(); // safe: initialize() short-circuits if already initialized
+    final uid = auth.firebaseUser!.uid;
+
+    // Start rooms listener if not already listening to this user
+    // Check both: uid changed OR rooms provider is not currently listening
+    final needsToStartListening =
+        _lastInitializedUid != uid ||
+        roomsProvider.rooms.isEmpty && !roomsProvider.isLoading;
+
+    debugPrint(
+      '🔐 needsToStartListening=$needsToStartListening (lastUid=$_lastInitializedUid, currentUid=$uid, rooms=${roomsProvider.rooms.length}, isLoading=${roomsProvider.isLoading})',
+    );
+
+    if (needsToStartListening) {
+      _lastInitializedUid = uid;
+
+      debugPrint('🔐 Starting rooms listener for uid: $uid');
+      // Start listening in post frame callback to avoid calling notifyListeners during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        roomsProvider.startListening(uid, forceRestart: true);
+
+        // Initialize notifications (non-blocking)
+        NotificationService().saveTokenForCurrentUser();
+        NotificationService().initialize();
+
+        // Process any pending notification navigation
+        NavigationService().processPendingNotification();
+      });
+    }
+
     return const DashboardScreen();
   }
 }

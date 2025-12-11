@@ -39,9 +39,7 @@ class _LoginScreenState extends State<LoginScreen> {
         context,
         listen: false,
       ).signIn(email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
-      }
+      // Don't navigate manually - AuthWrapper will handle navigation when auth state changes
     } on firebase_auth.FirebaseAuthException catch (e) {
       _showMessage(_firebaseAuthErrorMessage(e));
     } catch (e) {
@@ -53,22 +51,34 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleGoogleSignIn() async {
     final messenger = ScaffoldMessenger.of(context);
+    setState(() => _loading = true);
     try {
       final user = await _authService.signInWithGoogle();
       if (user == null) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Google sign-in failed')),
-        );
+        if (mounted) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Google sign-in cancelled')),
+          );
+        }
       }
+      // Don't navigate manually - AuthWrapper will handle navigation when auth state changes
+      // The AuthProvider listens to auth state changes and will trigger a rebuild
     } on firebase_auth.FirebaseAuthException catch (e) {
       _showMessage(_firebaseAuthErrorMessage(e));
-    } catch (_) {
-      _showMessage('An unexpected error occurred');
+    } catch (e) {
+      final errorMsg = e.toString();
+      // Check if it's the emulator Google Play Services error
+      if (errorMsg.contains('ApiException: 10')) {
+        _showMessage(
+          'Google Sign-In requires a physical device or Google Play Services. '
+          'Please use Email/Password login or Phone authentication for testing on emulator.',
+        );
+      } else {
+        _showMessage('Error: $errorMsg');
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _handleAppleSignIn() async {
-    _showMessage('Apple sign-in coming soon!');
   }
 
   Future<void> _handlePhoneSignIn() async {
@@ -95,8 +105,8 @@ class _LoginScreenState extends State<LoginScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.primary.withOpacity(0.12),
-              Theme.of(context).colorScheme.secondary.withOpacity(0.10),
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.10),
             ],
           ),
         ),
@@ -202,14 +212,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       onTap: _handleGoogleSignIn,
                       background: Colors.white,
                       foreground: Colors.black87,
-                    ),
-                    const SizedBox(height: 14),
-                    _SocialLoginButton(
-                      icon: const Icon(Icons.apple, size: 24),
-                      label: 'Continue with Apple',
-                      onTap: _handleAppleSignIn,
-                      background: Colors.black,
-                      foreground: Colors.white,
                     ),
                     const SizedBox(height: 14),
                     _SocialLoginButton(

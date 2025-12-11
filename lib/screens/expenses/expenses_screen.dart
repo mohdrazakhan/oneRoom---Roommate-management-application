@@ -10,7 +10,7 @@ import 'balances_screen.dart';
 class ExpensesScreen extends StatefulWidget {
   final String roomId;
 
-  const ExpensesScreen({Key? key, required this.roomId}) : super(key: key);
+  const ExpensesScreen({super.key, required this.roomId});
 
   @override
   State<ExpensesScreen> createState() => _ExpensesScreenState();
@@ -231,7 +231,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: Color(category.colorValue).withOpacity(0.2),
+          backgroundColor: Color(category.colorValue).withValues(alpha: 0.2),
           child: Text(category.icon, style: const TextStyle(fontSize: 24)),
         ),
         title: Text(

@@ -58,8 +58,9 @@ void showChangePasswordDialog(BuildContext context) {
                 ),
                 validator: (val) {
                   if (val == null || val.isEmpty) return 'Enter new password';
-                  if (val.length < 6)
+                  if (val.length < 6) {
                     return 'Password must be at least 6 characters';
+                  }
                   return null;
                 },
               ),
@@ -81,8 +82,9 @@ void showChangePasswordDialog(BuildContext context) {
                 ),
                 validator: (val) {
                   if (val == null || val.isEmpty) return 'Confirm new password';
-                  if (val != newPasswordController.text)
+                  if (val != newPasswordController.text) {
                     return 'Passwords don\'t match';
+                  }
                   return null;
                 },
               ),

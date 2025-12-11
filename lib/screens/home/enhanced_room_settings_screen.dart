@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -62,7 +63,7 @@ class _EnhancedRoomSettingsScreenState
         });
       }
     } catch (e) {
-      print('❌ Error loading member profiles: $e');
+      debugPrint('❌ Error loading member profiles: $e');
       if (mounted) {
         setState(() => _isLoadingProfiles = false);
       }
@@ -86,7 +87,7 @@ class _EnhancedRoomSettingsScreenState
         });
       }
     } catch (e) {
-      print('❌ Error loading expense stats: $e');
+      debugPrint('❌ Error loading expense stats: $e');
     }
   }
 
@@ -1129,7 +1130,7 @@ class _EnhancedRoomSettingsScreenState
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),

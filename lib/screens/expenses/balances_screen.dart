@@ -9,7 +9,7 @@ import '../../services/firestore_service.dart';
 class BalancesScreen extends StatelessWidget {
   final String roomId;
 
-  const BalancesScreen({Key? key, required this.roomId}) : super(key: key);
+  const BalancesScreen({super.key, required this.roomId});
 
   @override
   Widget build(BuildContext context) {
@@ -422,7 +422,7 @@ class BalancesScreen extends StatelessWidget {
     if (profile == null) return _fallbackFromUid(uid);
 
     // Log the profile data for debugging
-    print('👤 Profile data for $uid: $profile');
+    debugPrint('👤 Profile data for $uid: $profile');
 
     // Try displayName first (most common)
     if (profile['displayName'] is String &&

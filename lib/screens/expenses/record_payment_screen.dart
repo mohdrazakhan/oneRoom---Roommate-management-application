@@ -53,7 +53,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
         }
       }
     } catch (e) {
-      print('Error loading room data: $e');
+      debugPrint('Error loading room data: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -217,7 +217,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                   border: Border.all(color: Colors.grey[300]!),
                 ),
                 child: DropdownButtonFormField<String>(
-                  value: _payerId,
+                  initialValue: _payerId,
                   decoration: const InputDecoration(
                     prefixIcon: Icon(Icons.person_outline),
                     border: InputBorder.none,
@@ -272,7 +272,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                   border: Border.all(color: Colors.grey[300]!),
                 ),
                 child: DropdownButtonFormField<String>(
-                  value: _receiverId,
+                  initialValue: _receiverId,
                   decoration: const InputDecoration(
                     prefixIcon: Icon(Icons.person),
                     border: InputBorder.none,

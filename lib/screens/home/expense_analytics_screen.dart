@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../Models/room.dart';

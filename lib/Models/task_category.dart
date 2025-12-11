@@ -50,7 +50,7 @@ class TaskCategory {
       id: doc.id,
       name: data['name'] ?? '',
       iconCodePoint: data['iconCodePoint'] ?? Icons.task_alt_rounded.codePoint,
-      colorValue: data['colorValue'] ?? Colors.blue.value,
+      colorValue: data['colorValue'] ?? Colors.blue.toARGB32(),
       roomId: data['roomId'] ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );

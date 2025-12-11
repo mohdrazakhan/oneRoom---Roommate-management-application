@@ -83,7 +83,9 @@ class ExpenseDetailPopup extends StatelessWidget {
                             gradient: LinearGradient(
                               colors: [
                                 Color(category.colorValue),
-                                Color(category.colorValue).withOpacity(0.7),
+                                Color(
+                                  category.colorValue,
+                                ).withValues(alpha: 0.7),
                               ],
                             ),
                             borderRadius: BorderRadius.circular(20),
@@ -91,7 +93,7 @@ class ExpenseDetailPopup extends StatelessWidget {
                               BoxShadow(
                                 color: Color(
                                   category.colorValue,
-                                ).withOpacity(0.3),
+                                ).withValues(alpha: 0.3),
                                 blurRadius: 12,
                                 offset: const Offset(0, 6),
                               ),
@@ -211,7 +213,7 @@ class ExpenseDetailPopup extends StatelessWidget {
                                 CircleAvatar(
                                   radius: 16,
                                   backgroundColor: theme.colorScheme.primary
-                                      .withOpacity(0.1),
+                                      .withValues(alpha: 0.1),
                                   child: Text(
                                     name[0].toUpperCase(),
                                     style: TextStyle(

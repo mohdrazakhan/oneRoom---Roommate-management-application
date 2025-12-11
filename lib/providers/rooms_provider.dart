@@ -15,28 +15,43 @@ class RoomsProvider extends ChangeNotifier {
   String? _listeningUid;
 
   /// Start listening to rooms for a specific user UID.
-  /// Call this after user logs in. If already listening to another uid, it will restart.
-  void startListening(String uid) {
-    if (_listeningUid == uid) return; // already listening
+  /// Call this after user logs in. If already listening to the same uid, it will restart.
+  void startListening(String uid, {bool forceRestart = false}) {
+    debugPrint(
+      '🏠 RoomsProvider.startListening called for uid: $uid, forceRestart: $forceRestart',
+    );
+    debugPrint(
+      '🏠 Current state: _listeningUid=$_listeningUid, _roomsSub=${_roomsSub != null}',
+    );
+
+    if (_listeningUid == uid && !forceRestart && _roomsSub != null) {
+      debugPrint('🏠 Already listening to this uid, skipping');
+      return; // already listening
+    }
     _roomsSub?.cancel();
     _listeningUid = uid;
     isLoading = true;
     notifyListeners();
 
+    debugPrint('🏠 Starting Firestore listener for rooms...');
     _roomsSub = _fs
         .roomsForUser(uid)
         .listen(
           (listMap) {
+            debugPrint('🏠 Received ${listMap.length} rooms from Firestore');
             rooms = listMap.map((m) {
               // m is a map with fields and 'id' present (as used in the FirestoreService earlier)
               final id = (m['id'] ?? '') as String;
+              debugPrint('🏠 Room: $id - ${m['name']}');
               return Room.fromMap(Map<String, dynamic>.from(m), id);
             }).toList();
             isLoading = false;
             error = null;
+            debugPrint('🏠 Rooms loaded: ${rooms.length}, notifying listeners');
             notifyListeners();
           },
           onError: (e) {
+            debugPrint('🏠 ❌ Error loading rooms: $e');
             error = e.toString();
             isLoading = false;
             notifyListeners();

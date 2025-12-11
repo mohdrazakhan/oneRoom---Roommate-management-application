@@ -1,9 +1,12 @@
+// ignore_for_file: avoid_print
 // lib/services/firestore_service.dart
 // Firestore helper: rooms, expenses, users
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../Models/expense.dart';
 import '../Models/room_notification.dart';
+import '../Models/task.dart';
+import '../Models/task_category.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -415,7 +418,7 @@ class FirestoreService {
         .map((snap) => snap.docs.map((doc) => Expense.fromDoc(doc)).toList());
   }
 
-  /// Get expenses as Stream of List<Expense> (alias for better clarity)
+  /// Get expenses as Stream of `List<Expense>` (alias for better clarity)
   Stream<List<Expense>> getExpenses(String roomId) {
     return getExpensesStream(roomId);
   }
@@ -542,6 +545,40 @@ class FirestoreService {
     });
   }
 
+  /// Get a single task by ID
+  Future<Task?> getTask(String roomId, String taskId) async {
+    try {
+      final doc = await _rooms
+          .doc(roomId)
+          .collection('tasks')
+          .doc(taskId)
+          .get();
+
+      if (!doc.exists) return null;
+      return Task.fromFirestore(doc);
+    } catch (e) {
+      print('Error getting task: $e');
+      return null;
+    }
+  }
+
+  /// Get a single task category by ID
+  Future<TaskCategory?> getCategory(String roomId, String categoryId) async {
+    try {
+      final doc = await _rooms
+          .doc(roomId)
+          .collection('task_categories')
+          .doc(categoryId)
+          .get();
+
+      if (!doc.exists) return null;
+      return TaskCategory.fromFirestore(doc);
+    } catch (e) {
+      print('Error getting category: $e');
+      return null;
+    }
+  }
+
   /// Get total count of tasks across all rooms the user is a member of
   Future<int> getTotalTasksCount(String uid) async {
     int totalTasks = 0;
@@ -659,14 +696,8 @@ class FirestoreService {
     final startOfDay = DateTime(today.year, today.month, today.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
 
-    // Fallback index-friendly query: filter by assignee only and apply date range client-side
-    // Re-enable server-side date filters once the composite index is confirmed active.
-    // DEBUG: Using client-side date filtering to avoid composite index during rollout
-    // ignore: avoid_print
-    print(
-      'FirestoreService.getTodayTasksForUser: client-side date filter active for user: ' +
-          userId,
-    );
+    // Reduced to single where clause on assignedTo + client-side date filtering
+    // to avoid composite index requirement
     return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
       roomsSnap,
     ) async {
@@ -675,24 +706,31 @@ class FirestoreService {
         final roomId = room.id;
         final roomName =
             (room.data() as Map<String, dynamic>)['name'] ?? 'Room';
+        // Only filter by assignedTo (one where clause)
         final q = _rooms
             .doc(roomId)
             .collection('taskInstances')
-            .where('assignedTo', isEqualTo: userId)
-            .where(
-              'scheduledDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
-            )
-            .where('scheduledDate', isLessThan: Timestamp.fromDate(endOfDay));
+            .where('assignedTo', isEqualTo: userId);
         final snap = await q.get();
+
+        final startOfDayTs = Timestamp.fromDate(startOfDay);
+        final endOfDayTs = Timestamp.fromDate(endOfDay);
+
         for (final d in snap.docs) {
           final m = d.data();
-          all.add({
-            ...m,
-            'taskInstanceId': d.id,
-            'roomId': roomId,
-            'roomName': roomName,
-          });
+          final scheduledDate = m['scheduledDate'] as Timestamp?;
+
+          // Client-side date filtering for today only
+          if (scheduledDate != null &&
+              scheduledDate.compareTo(startOfDayTs) >= 0 &&
+              scheduledDate.compareTo(endOfDayTs) < 0) {
+            all.add({
+              ...m,
+              'taskInstanceId': d.id,
+              'roomId': roomId,
+              'roomName': roomName,
+            });
+          }
         }
       }
       all.sort((a, b) {
@@ -714,12 +752,8 @@ class FirestoreService {
     ).add(const Duration(days: 1));
     final nextThirtyDays = tomorrow.add(const Duration(days: 30));
 
-    // DEBUG: Using client-side date filtering to avoid composite index during rollout
-    // ignore: avoid_print
-    print(
-      'FirestoreService.getUpcomingTasksForUser (30 days): client-side date filter active for user: ' +
-          userId,
-    );
+    // Reduced to single where clause on assignedTo + client-side date filtering
+    // to avoid composite index requirement
     return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
       roomsSnap,
     ) async {
@@ -728,27 +762,31 @@ class FirestoreService {
         final roomId = room.id;
         final roomName =
             (room.data() as Map<String, dynamic>)['name'] ?? 'Room';
+        // Only filter by assignedTo (one where clause)
         final q = _rooms
             .doc(roomId)
             .collection('taskInstances')
-            .where('assignedTo', isEqualTo: userId)
-            .where(
-              'scheduledDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(tomorrow),
-            )
-            .where(
-              'scheduledDate',
-              isLessThan: Timestamp.fromDate(nextThirtyDays),
-            );
+            .where('assignedTo', isEqualTo: userId);
         final snap = await q.get();
+
+        final tomorrowTs = Timestamp.fromDate(tomorrow);
+        final nextThirtyDaysTs = Timestamp.fromDate(nextThirtyDays);
+
         for (final d in snap.docs) {
           final m = d.data();
-          all.add({
-            ...m,
-            'taskInstanceId': d.id,
-            'roomId': roomId,
-            'roomName': roomName,
-          });
+          final scheduledDate = m['scheduledDate'] as Timestamp?;
+
+          // Client-side date filtering
+          if (scheduledDate != null &&
+              scheduledDate.compareTo(tomorrowTs) >= 0 &&
+              scheduledDate.compareTo(nextThirtyDaysTs) < 0) {
+            all.add({
+              ...m,
+              'taskInstanceId': d.id,
+              'roomId': roomId,
+              'roomName': roomName,
+            });
+          }
         }
       }
       all.sort((a, b) {
@@ -969,7 +1007,6 @@ class FirestoreService {
       });
     } catch (e) {
       // ignore failure so core flow still works
-      // ignore: avoid_print
       print('Swap notification status update failed: $e');
     }
   }
@@ -1043,11 +1080,15 @@ class FirestoreService {
             .doc(roomId)
             .collection('taskInstances')
             .where('taskId', isEqualTo: taskId)
-            .where('scheduledDate', isEqualTo: scheduledDate)
-            .limit(1)
+            .limit(10)
             .get();
 
-        if (existingInstances.docs.isNotEmpty) {
+        // Client-side filtering for the date to avoid composite index
+        final dateMatch = existingInstances.docs
+            .where((doc) => doc['scheduledDate'] == scheduledDate)
+            .toList();
+
+        if (dateMatch.isNotEmpty) {
           continue; // Instance already exists
         }
 
@@ -1183,7 +1224,7 @@ class FirestoreService {
     final y = date.year.toString().padLeft(4, '0');
     final m = date.month.toString().padLeft(2, '0');
     final d = date.day.toString().padLeft(2, '0');
-    return '${taskId}_${y}${m}${d}';
+    return '${taskId}_$y$m$d';
   }
 
   /// Stream the task instance document for a given task on a specific date (or null if missing)
@@ -1201,17 +1242,20 @@ class FirestoreService {
         return {...data, 'taskInstanceId': snap.id};
       }
       // Fallback for legacy instances created before deterministic IDs
+      final targetDate = Timestamp.fromDate(day);
       final q = await _rooms
           .doc(roomId)
           .collection('taskInstances')
           .where('taskId', isEqualTo: taskId)
-          .where('scheduledDate', isEqualTo: Timestamp.fromDate(day))
-          .limit(1)
+          .limit(10)
           .get();
-      if (q.docs.isNotEmpty) {
-        final d = q.docs.first;
-        final data = d.data();
-        return {...data, 'taskInstanceId': d.id};
+
+      // Client-side filtering for the date to avoid composite index
+      for (final doc in q.docs) {
+        final data = doc.data();
+        if (data['scheduledDate'] == targetDate) {
+          return {...data, 'taskInstanceId': doc.id};
+        }
       }
       return null;
     });

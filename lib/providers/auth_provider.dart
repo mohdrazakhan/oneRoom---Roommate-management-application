@@ -48,7 +48,7 @@ class AuthProvider extends ChangeNotifier {
         if ((profile!.displayName == null || profile!.displayName!.isEmpty) &&
             u.displayName != null &&
             u.displayName!.isNotEmpty) {
-          print(
+          debugPrint(
             '🔄 Updating missing displayName for ${u.uid}: ${u.displayName}',
           );
           await docRef.update({
@@ -71,7 +71,7 @@ class AuthProvider extends ChangeNotifier {
           displayName = 'User ${u.phoneNumber!.substring(0, 4)}';
         }
 
-        print(
+        debugPrint(
           '✨ Creating new profile for ${u.uid}: "$displayName" (email: ${u.email}, phone: ${u.phoneNumber})',
         );
 
@@ -84,16 +84,18 @@ class AuthProvider extends ChangeNotifier {
           joinedRooms: [],
         );
 
-        print('📤 Saving profile to Firestore: ${newProfile.toMapForCreate()}');
+        debugPrint(
+          '📤 Saving profile to Firestore: ${newProfile.toMapForCreate()}',
+        );
         await docRef.set(newProfile.toMapForCreate());
         profile = newProfile;
-        print(
+        debugPrint(
           '✅ Profile created successfully with displayName: "${profile?.displayName}"',
         );
       }
     } catch (e) {
       error = 'Failed to load/create profile: $e';
-      print('❌ Error in _loadOrCreateUserProfile: $e');
+      debugPrint('❌ Error in _loadOrCreateUserProfile: $e');
     }
   }
 
@@ -126,7 +128,7 @@ class AuthProvider extends ChangeNotifier {
               email.split('@')[0],
             ); // Use email username as fallback
 
-      print('📝 Signing up user with displayName: "$finalDisplayName"');
+      debugPrint('📝 Signing up user with displayName: "$finalDisplayName"');
 
       // Update Firebase Auth displayName FIRST
       await user.updateDisplayName(finalDisplayName);
@@ -141,13 +143,15 @@ class AuthProvider extends ChangeNotifier {
         joinedRooms: [],
       );
 
-      print('✅ Creating Firestore profile with displayName: $finalDisplayName');
+      debugPrint(
+        '✅ Creating Firestore profile with displayName: $finalDisplayName',
+      );
       await docRef.set(newProfile.toMapForCreate());
 
       firebaseUser = user;
       profile = newProfile;
 
-      print('✅ Signup complete! DisplayName: ${profile?.displayName}');
+      debugPrint('✅ Signup complete! DisplayName: ${profile?.displayName}');
     } on FirebaseAuthException catch (e) {
       error = e.message;
       rethrow;
@@ -286,6 +290,12 @@ class AuthProvider extends ChangeNotifier {
         case 'expenseReminders':
           updates['expenseRemindersEnabled'] = value;
           break;
+        case 'chatNotifications':
+          updates['chatNotificationsEnabled'] = value;
+          break;
+        case 'expensePaymentAlerts':
+          updates['expensePaymentAlertsEnabled'] = value;
+          break;
       }
 
       await _db.collection('users').doc(firebaseUser!.uid).update(updates);
@@ -334,6 +344,39 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Remove profile photo from Firebase Storage and update profile
+  Future<void> removeProfilePhoto() async {
+    if (firebaseUser == null) return;
+    isLoading = true;
+    notifyListeners();
+
+    try {
+      final uid = firebaseUser!.uid;
+      final storageRef = _storage.ref().child('users/$uid/profile.jpg');
+
+      // Delete file from storage (if it exists)
+      try {
+        await storageRef.delete();
+      } catch (e) {
+        // Ignore if file doesn't exist
+        print('Photo file may not exist: $e');
+      }
+
+      // Update Firestore and Firebase Auth to remove photo URL
+      await _db.collection('users').doc(uid).update({'photoUrl': null});
+      await firebaseUser!.updatePhotoURL(null);
+
+      // Update local profile
+      profile = profile?.copyWith(photoUrl: '') ?? profile;
+    } catch (e) {
+      error = e.toString();
+      rethrow;
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Change password (requires re-authentication)
   Future<void> changePassword(
     String currentPassword,
@@ -364,6 +407,85 @@ class AuthProvider extends ChangeNotifier {
       }
     } catch (e) {
       rethrow;
+    }
+  }
+
+  /// Send phone verification code
+  Future<void> sendPhoneVerificationCode({
+    required String phoneNumber,
+    required Function(PhoneAuthCredential) verificationCompleted,
+    required Function(FirebaseAuthException) verificationFailed,
+    required Function(String verificationId, int? resendToken) codeSent,
+    required Function(String verificationId) codeAutoRetrievalTimeout,
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    try {
+      debugPrint('📱 Sending phone verification code for: $phoneNumber');
+
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phoneNumber,
+        timeout: timeout,
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          debugPrint('✅ Phone auto-verification successful');
+          verificationCompleted(credential);
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          debugPrint('❌ Phone verification failed: ${e.code} - ${e.message}');
+          verificationFailed(e);
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          debugPrint('✅ Phone verification code sent');
+          codeSent(verificationId, resendToken);
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {
+          debugPrint('⏱️ Phone code auto-retrieval timeout');
+          codeAutoRetrievalTimeout(verificationId);
+        },
+      );
+    } on FirebaseAuthException catch (e) {
+      debugPrint('❌ Error sending phone code: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ Unexpected error: $e');
+      rethrow;
+    }
+  }
+
+  /// Sign in with phone credential
+  Future<void> signInWithPhoneCredential(PhoneAuthCredential credential) async {
+    try {
+      isLoading = true;
+      notifyListeners();
+
+      debugPrint('📱 Signing in with phone credential');
+
+      final userCredential = await _auth.signInWithCredential(credential);
+      final user = userCredential.user;
+
+      if (user == null) {
+        throw FirebaseAuthException(
+          code: 'null-user',
+          message: 'User is null after phone sign-in',
+        );
+      }
+
+      debugPrint('✅ Phone sign-in successful: ${user.uid}');
+
+      firebaseUser = user;
+      await _loadOrCreateUserProfile(user);
+
+      debugPrint('✅ Profile loaded/created for phone user');
+    } on FirebaseAuthException catch (e) {
+      debugPrint('❌ Phone sign-in failed: ${e.code} - ${e.message}');
+      error = e.message ?? 'Phone authentication failed';
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ Unexpected error during phone sign-in: $e');
+      error = e.toString();
+      rethrow;
+    } finally {
+      isLoading = false;
+      notifyListeners();
     }
   }
 }

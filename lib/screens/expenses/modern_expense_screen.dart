@@ -297,7 +297,9 @@ class _ModernExpenseScreenState extends State<ModernExpenseScreen> {
       leading: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.orange.withOpacity(0.2) : Colors.grey[100],
+          color: isSelected
+              ? Colors.orange.withValues(alpha: 0.2)
+              : Colors.grey[100],
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(icon, color: isSelected ? Colors.orange : Colors.grey[600]),
@@ -941,7 +943,7 @@ class _ModernExpenseScreenState extends State<ModernExpenseScreen> {
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.1),
+              color: Colors.orange.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.orange, width: 2),
             ),

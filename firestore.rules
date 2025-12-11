@@ -193,5 +193,23 @@ service cloud.firestore {
       // Users can only delete their own notifications
       allow delete: if isSignedIn() && request.auth.uid == resource.data.userId;
     }
+
+    // Bug reports collection (top-level)
+    match /bug_reports/{reportId} {
+      // Allow authenticated users to create bug reports
+      allow create: if isSignedIn() &&
+        request.resource.data.title is string && request.resource.data.title.size() > 0 &&
+        request.resource.data.description is string && request.resource.data.description.size() > 5 &&
+        request.resource.data.contact is string && request.resource.data.contact.size() > 0 &&
+        request.resource.data.userId is string && request.resource.data.userId == request.auth.uid &&
+        request.resource.data.attachments is list &&
+        request.resource.data.createdAt is timestamp;
+
+      // Allow reporter to read their own reports
+      allow read: if isSignedIn() && request.auth.uid == resource.data.userId;
+
+      // No updates or deletes by clients (immutable once submitted)
+      allow update, delete: if false;
+    }
   }
 }

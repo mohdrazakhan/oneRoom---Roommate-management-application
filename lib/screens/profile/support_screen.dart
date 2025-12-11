@@ -1,9 +1,20 @@
 // lib/screens/profile/support_screen.dart
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'privacy_policy_screen.dart';
+import 'terms_of_service_screen.dart';
+import 'user_guide_screen.dart';
+import 'report_bug_screen.dart';
 
-class SupportScreen extends StatelessWidget {
+class SupportScreen extends StatefulWidget {
   const SupportScreen({super.key});
+
+  @override
+  State<SupportScreen> createState() => _SupportScreenState();
+}
+
+class _SupportScreenState extends State<SupportScreen> {
+  bool _showAllFAQs = false;
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +37,8 @@ class SupportScreen extends StatelessWidget {
               _buildContactTile(
                 icon: Icons.email_outlined,
                 title: 'Email Support',
-                subtitle: 'mohdrazakhan32@gmail.com',
-                onTap: () => _launchUrl('mailto:mohdrazakhan32@gmail.com'),
+                subtitle: 'care.oneroom@gmail.com',
+                onTap: () => _launchUrl('mailto:care.oneroom@gmail.com'),
               ),
               _buildContactTile(
                 icon: Icons.chat_bubble_outline_rounded,
@@ -48,24 +59,103 @@ class SupportScreen extends StatelessWidget {
             color: Colors.green,
             children: [
               _buildFAQTile(
+                question: 'How do I create or join a room?',
+                answer:
+                    'To create a room, tap "Create Room" on the dashboard and enter room details. To join, tap "Join Room" and enter the room code shared by a roommate, or scan the QR code.',
+              ),
+              _buildFAQTile(
                 question: 'How do I add roommates?',
                 answer:
-                    'Go to your room, tap the menu, and select "Add Member". Share the invite code with your roommate.',
+                    'Go to your room, tap the three-dot menu, select "Add Member", then share the room code or QR code. Your roommate can join by entering the code or scanning the QR.',
               ),
               _buildFAQTile(
                 question: 'How are expenses split?',
                 answer:
-                    'Expenses are automatically calculated and split equally among selected members.',
+                    'When adding an expense, you can choose: Equal split (divided equally), Exact amounts (specify each person\'s share), or Percentage split. The app automatically calculates who owes what and tracks settlements.',
               ),
-              _buildFAQTile(
-                question: 'Can I have multiple rooms?',
-                answer:
-                    'Yes! You can create or join multiple rooms for different living situations.',
-              ),
-              _buildFAQTile(
-                question: 'How do notifications work?',
-                answer:
-                    'You can customize notification preferences in your profile settings.',
+              if (_showAllFAQs) ...[
+                _buildFAQTile(
+                  question: 'How do task assignments work?',
+                  answer:
+                      'Create task categories, add tasks with schedules (daily, weekly, custom). Tasks rotate automatically among selected members. You can swap tasks with roommates, and everyone gets notifications for their assignments.',
+                ),
+                _buildFAQTile(
+                  question: 'Can I have multiple rooms?',
+                  answer:
+                      'Yes! You can create or join multiple rooms for different living situations. Switch between rooms from the dashboard to manage each one independently.',
+                ),
+                _buildFAQTile(
+                  question: 'How do notifications work?',
+                  answer:
+                      'You can customize notification preferences in Profile > Notifications. Control: Push Notifications (master toggle), Task Reminders, Expense Reminders, Chat Notifications, and Expense/Payment Alerts individually.',
+                ),
+                _buildFAQTile(
+                  question: 'How does the chat feature work?',
+                  answer:
+                      'Each room has a dedicated chat. Send text messages, images, videos, polls, payment reminders, and link expenses or tasks. Tap linked items to view full details.',
+                ),
+                _buildFAQTile(
+                  question: 'How do I settle expenses?',
+                  answer:
+                      'View any expense to see who owes what. Tap "Settle" next to your name when you\'ve paid your share. The expense shows as fully settled when everyone has paid.',
+                ),
+                _buildFAQTile(
+                  question: 'Can I edit or delete tasks and expenses?',
+                  answer:
+                      'Yes! Tap the three-dot menu on any task or expense to edit or delete. Changes sync automatically for all room members.',
+                ),
+                _buildFAQTile(
+                  question: 'How do I view all members across my rooms?',
+                  answer:
+                      'From the dashboard, tap the "Members" card to see a comprehensive list of all unique members from all your rooms, grouped by room.',
+                ),
+                _buildFAQTile(
+                  question: 'How do I manage my profile?',
+                  answer:
+                      'Go to Profile to update your name, tagline, date of birth, profile photo, password, and notification settings. You can also remove your profile photo if needed.',
+                ),
+                _buildFAQTile(
+                  question: 'What if I want to leave a room?',
+                  answer:
+                      'Go to the room, tap the menu, and select "Leave Room". Note: If you\'re the creator and last member, the room will be deleted.',
+                ),
+              ],
+              // Show More/Less Button
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _showAllFAQs = !_showAllFAQs;
+                      });
+                    },
+                    icon: Icon(
+                      _showAllFAQs
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: Colors.green,
+                    ),
+                    label: Text(
+                      _showAllFAQs ? 'Show Less' : 'Show More Questions',
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                      backgroundColor: Colors.green.withValues(alpha: 0.1),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
@@ -79,25 +169,31 @@ class SupportScreen extends StatelessWidget {
                 icon: Icons.article_outlined,
                 title: 'User Guide',
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Opening user guide...')),
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const UserGuideScreen(),
+                    ),
                   );
                 },
               ),
               _buildResourceTile(
                 icon: Icons.video_library_outlined,
                 title: 'Video Tutorials',
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Opening tutorials...')),
-                  );
-                },
+                onTap: () =>
+                    _launchUrl('https://www.youtube.com/@care.oneroom'),
               ),
               _buildResourceTile(
                 icon: Icons.bug_report_outlined,
                 title: 'Report a Bug',
-                onTap: () =>
-                    _launchUrl('mailto:mohdrazakhan32@gmail.com?subject=Bug Report'),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const ReportBugScreen(),
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -111,8 +207,11 @@ class SupportScreen extends StatelessWidget {
                 icon: Icons.privacy_tip_outlined,
                 title: 'Privacy Policy',
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Opening privacy policy...')),
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const PrivacyPolicyScreen(),
+                    ),
                   );
                 },
               ),
@@ -120,9 +219,10 @@ class SupportScreen extends StatelessWidget {
                 icon: Icons.description_outlined,
                 title: 'Terms of Service',
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Opening terms of service...'),
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const TermsOfServiceScreen(),
                     ),
                   );
                 },
@@ -146,7 +246,7 @@ class SupportScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 10,
             spreadRadius: 2,
           ),
@@ -162,7 +262,7 @@ class SupportScreen extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
+                    color: color.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(icon, color: color, size: 24),

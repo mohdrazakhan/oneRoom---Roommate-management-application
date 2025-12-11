@@ -18,7 +18,7 @@ service firebase.storage {
     }
     
     // Room photos
-    match /rooms/{roomId}/photo_{timestamp}.jpg {
+    match /rooms/{roomId}/{photoFile} {
       // Anyone can read room photos
       allow read: if true;
       
@@ -43,6 +43,14 @@ service firebase.storage {
       
       // Only authenticated users can upload chat media
       allow write: if isSignedIn();
+    }
+
+    // Bug report attachments
+    match /bug_reports/{userId}/{folder}/{filename} {
+      // Allow read for authenticated users (support team / reporter)
+      allow read: if isSignedIn();
+      // Only the reporter can upload their files
+      allow write: if isSignedIn() && request.auth.uid == userId;
     }
     
     // Default deny all other paths

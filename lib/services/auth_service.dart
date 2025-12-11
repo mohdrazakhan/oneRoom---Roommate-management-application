@@ -8,14 +8,22 @@ import 'package:flutter/foundation.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
 
   Future<User?> signInWithGoogle() async {
     try {
+      debugPrint('🔵 Starting Google Sign-In...');
+
+      // Request sign out first to clear any cached state
+      await _googleSignIn.signOut();
+
       final googleUser = await _googleSignIn.signIn();
       if (googleUser == null) {
+        debugPrint('⚠️ Google Sign-In cancelled by user');
         return null;
       }
+
+      debugPrint('✅ Google user signed in: ${googleUser.email}');
 
       final googleAuth = await googleUser.authentication;
       if (googleAuth.idToken == null && googleAuth.accessToken == null) {
@@ -24,17 +32,24 @@ class AuthService {
           message: 'Missing Google ID or access token.',
         );
       }
+
+      debugPrint('✅ Got Google authentication tokens');
+
       final credential = GoogleAuthProvider.credential(
         idToken: googleAuth.idToken,
         accessToken: googleAuth.accessToken,
       );
 
       final userCredential = await _auth.signInWithCredential(credential);
+      debugPrint(
+        '✅ Firebase sign-in successful: ${userCredential.user?.email}',
+      );
       return userCredential.user;
-    } on FirebaseAuthException {
+    } on FirebaseAuthException catch (e) {
+      debugPrint('❌ Firebase Auth Error: ${e.code} - ${e.message}');
       rethrow;
     } catch (e) {
-      debugPrint(e.toString());
+      debugPrint('❌ Google Sign-In Error: $e');
       rethrow;
     }
   }

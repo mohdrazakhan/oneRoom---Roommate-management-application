@@ -1,6 +1,8 @@
 {
   "functions": {
-    "source": "functions"
+    "source": "functions",
+    "codebase": "default",
+    "runtime": "nodejs20"
   },
   "firestore": {
     "rules": "firestore.rules"
@@ -12,36 +14,36 @@
     "platforms": {
       "android": {
         "default": {
-          "projectId": "one-room-56ea2",
-          "appId": "1:470027033928:android:8dc84d57ef28373b50277d",
+          "projectId": "one-room-2c1a6",
+          "appId": "1:30053537626:android:b197b423c3f1c575a30563",
           "fileOutput": "android/app/google-services.json"
         }
       },
       "ios": {
         "default": {
-          "projectId": "one-room-56ea2",
-          "appId": "1:470027033928:ios:b8c2f9dd93bbb24550277d",
+          "projectId": "one-room-2c1a6",
+          "appId": "1:30053537626:ios:849fc4fd740b861ba30563",
           "uploadDebugSymbols": false,
           "fileOutput": "ios/Runner/GoogleService-Info.plist"
         }
       },
       "macos": {
         "default": {
-          "projectId": "one-room-56ea2",
-          "appId": "1:470027033928:ios:b8c2f9dd93bbb24550277d",
+          "projectId": "one-room-2c1a6",
+          "appId": "1:30053537626:ios:849fc4fd740b861ba30563",
           "uploadDebugSymbols": false,
           "fileOutput": "macos/Runner/GoogleService-Info.plist"
         }
       },
       "dart": {
         "lib/firebase_options.dart": {
-          "projectId": "one-room-b42b0",
+          "projectId": "one-room-2c1a6",
           "configurations": {
-            "android": "1:470027033928:android:8dc84d57ef28373b50277d",
-            "ios": "1:470027033928:ios:b8c2f9dd93bbb24550277d",
-            "macos": "1:470027033928:ios:b8c2f9dd93bbb24550277d",
-            "web": "1:470027033928:web:c202c19b95ae059c50277d",
-            "windows": "1:470027033928:web:2c30873c24f691d450277d"
+            "android": "1:30053537626:android:b197b423c3f1c575a30563",
+            "ios": "1:30053537626:ios:849fc4fd740b861ba30563",
+            "macos": "1:30053537626:ios:849fc4fd740b861ba30563",
+            "web": "1:30053537626:web:8959fa3e3e0e978ea30563",
+            "windows": "1:30053537626:web:864ba19f8e106dd9a30563"
           }
         }
       }

@@ -6,7 +6,6 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart';
 import '../services/navigation_service.dart';
 import '../app.dart';
 import '../screens/chat/chat_screen.dart';
@@ -112,14 +111,21 @@ class NotificationService {
     // Handle notification taps when app is in background/terminated
     FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
+    // Set the handler for pending navigation
+    NavigationService().setPendingNavigationHandler(_routeFromData);
+
     // Check if app was opened from a terminated state via notification
-    // Don't block startup on this; handle when it completes
-    // ignore: unawaited_futures
-    _messaging.getInitialMessage().then((initialMessage) {
-      if (initialMessage != null) {
-        _handleMessageOpenedApp(initialMessage);
-      }
-    });
+    // Store the data and process it when navigator is ready
+    final initialMessage = await _messaging.getInitialMessage();
+    if (initialMessage != null) {
+      debugPrint(
+        '📩 App opened from terminated state via notification: ${initialMessage.data}',
+      );
+      // Store the notification data to be processed when navigator is ready
+      NavigationService().setPendingNotificationData(
+        Map<String, dynamic>.from(initialMessage.data),
+      );
+    }
 
     // Get FCM token and save to Firestore
     // Save token in background
@@ -228,13 +234,19 @@ class NotificationService {
 
   void _routeFromData(Map<String, dynamic> data) {
     final nav = NavigationService().navigatorKey.currentState;
-    if (nav == null) return;
+    if (nav == null) {
+      debugPrint('⚠️ Navigator not ready, storing notification for later');
+      NavigationService().setPendingNotificationData(data);
+      return;
+    }
 
     final rawType = data['type']?.toString();
     // Normalize variants produced by helper and functions
     final type = _normalizeType(rawType);
     final roomId = data['roomId']?.toString();
     final roomName = data['roomName']?.toString() ?? 'Room';
+
+    debugPrint('🔔 Routing notification: type=$type, roomId=$roomId');
 
     if (type == 'chat' && roomId != null) {
       nav.push(
@@ -355,8 +367,12 @@ class NotificationService {
     // For now, we'll prepare the data structure
     debugPrint('📤 Would send notification to $userId: $title');
 
-    // TODO: Call Cloud Function
-    // await FirebaseFunctions.instance.httpsCallable('sendNotification').call({
+    // Cloud Function implementation:
+    // 1. Add firebase_functions package to pubspec.yaml
+    // 2. Deploy the sendNotification function (see functions/src/index.ts)
+    // 3. Uncomment below:
+    // final functions = FirebaseFunctions.instance;
+    // await functions.httpsCallable('sendNotification').call({
     //   'userId': userId,
     //   'title': title,
     //   'body': body,
@@ -373,8 +389,11 @@ class NotificationService {
   }) async {
     debugPrint('📤 Would send notification to room $roomId: $title');
 
-    // TODO: Call Cloud Function that sends to room topic
-    // await FirebaseFunctions.instance.httpsCallable('sendRoomNotification').call({
+    // Cloud Function implementation:
+    // 1. Deploy the sendRoomNotification function (see functions/src/index.ts)
+    // 2. Uncomment below:
+    // final functions = FirebaseFunctions.instance;
+    // await functions.httpsCallable('sendRoomNotification').call({
     //   'roomId': roomId,
     //   'title': title,
     //   'body': body,
@@ -390,11 +409,23 @@ class NotificationService {
     // Cancel any existing daily reminder
     await _localNotifications.cancel(999);
 
-    // For now, just log the intention
-    // TODO: Implement proper recurring notifications with timezone package
-    debugPrint('⏰ Daily reminder would be scheduled for $hour:$minute');
+    // Recurring notifications implementation guide:
+    // 1. Add to pubspec.yaml: timezone: ^0.9.0
+    // 2. Initialize: await timezone.initializeTimeZones();
+    // 3. Use flutter_local_notifications zonedSchedule with DateTimeComponents.time
+    // Example:
+    // final tz.TZDateTime scheduledDate = tz.TZDateTime(
+    //   tz.local, DateTime.now().year, DateTime.now().month,
+    //   DateTime.now().day, hour, minute,
+    // );
+    // await _localNotifications.zonedSchedule(
+    //   999, 'Daily Reminder', 'Check your tasks!',
+    //   scheduledDate, platformChannelSpecifics,
+    //   androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    //   matchDateTimeComponents: DateTimeComponents.time,
+    // );
     debugPrint(
-      '   To enable, add timezone package and implement proper scheduling',
+      '⏰ Daily reminder scheduled for $hour:$minute (implementation pending)',
     );
   }
 

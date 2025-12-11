@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // lib/screens/tasks/category_tasks_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -121,20 +122,21 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
     if (!mounted) return;
 
     if (newName != null && newName.isNotEmpty) {
+      if (!context.mounted) return;
       await context.read<TasksProvider>().renameCategory(
         widget.roomId,
         widget.category.id,
         newName,
       );
-      if (mounted) {
-        setState(() => _categoryName = newName);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Category renamed'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _categoryName = newName);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Category renamed'),
+          backgroundColor: Colors.green,
+        ),
+      );
     }
   }
 
@@ -163,7 +165,7 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
               child: Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: widget.category.color.withOpacity(0.15),
+                  color: widget.category.color.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
@@ -274,7 +276,7 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
           Container(
             padding: const EdgeInsets.all(32),
             decoration: BoxDecoration(
-              color: widget.category.color.withOpacity(0.1),
+              color: widget.category.color.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(
@@ -436,7 +438,7 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
                   onChanged: (value) {
                     tasksProvider.toggleTaskActive(widget.roomId, task);
                   },
-                  activeColor: widget.category.color,
+                  activeThumbColor: widget.category.color,
                 ),
               ],
             ),
@@ -533,7 +535,7 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(

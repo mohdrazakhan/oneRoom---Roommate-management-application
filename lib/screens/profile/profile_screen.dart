@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../providers/auth_provider.dart';
 import '../../Models/user_profile.dart';
+import '../../constants.dart';
 import 'edit_profile_dialogs.dart';
 import 'change_password_dialog.dart';
 import 'about_screen.dart';
@@ -33,29 +33,115 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
 
       if (image == null) return;
+      if (!mounted) return;
 
       setState(() => _isUploading = true);
 
       final authProvider = context.read<AuthProvider>();
       await authProvider.uploadProfilePhoto(File(image.path));
 
-      if (mounted) {
-        setState(() => _isUploading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Profile photo updated!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile photo updated!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } catch (e) {
-      if (mounted) {
-        setState(() => _isUploading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
     }
+  }
+
+  Future<void> _removeProfilePhoto() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Photo'),
+        content: const Text(
+          'Are you sure you want to remove your profile photo?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      setState(() => _isUploading = true);
+
+      final authProvider = context.read<AuthProvider>();
+      await authProvider.removeProfilePhoto();
+
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile photo removed!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _showPhotoOptions(bool hasPhoto) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_rounded),
+                title: Text(hasPhoto ? 'Change Photo' : 'Add Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndUploadImage();
+                },
+              ),
+              if (hasPhoto)
+                ListTile(
+                  leading: const Icon(Icons.delete_rounded, color: Colors.red),
+                  title: const Text(
+                    'Remove Photo',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _removeProfilePhoto();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -139,7 +225,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white.withValues(alpha: 0.9),
                             fontSize: 14,
                           ),
                         ),
@@ -164,7 +250,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             border: Border.all(color: Colors.white, width: 4),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: Colors.black.withValues(alpha: 0.2),
                 blurRadius: 10,
                 spreadRadius: 2,
               ),
@@ -172,20 +258,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           child: CircleAvatar(
             radius: 50,
-            backgroundColor: Colors.white,
-            backgroundImage: profile.photoUrl != null
-                ? NetworkImage(profile.photoUrl!)
-                : null,
-            child: profile.photoUrl == null
-                ? Text(
-                    _getInitials(profile.displayName ?? profile.email ?? '?'),
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.deepPurple,
+            backgroundColor: Colors.grey[200],
+            child: profile.photoUrl != null
+                ? ClipOval(
+                    child: Image.network(
+                      profile.photoUrl!,
+                      fit: BoxFit.cover,
+                      width: 100,
+                      height: 100,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Center(
+                          child: Text(
+                            _getInitials(
+                              profile.displayName ?? profile.email ?? '?',
+                            ),
+                            style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.deepPurple,
+                            ),
+                          ),
+                        );
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Center(
+                          child: CircularProgressIndicator(
+                            value: loadingProgress.expectedTotalBytes != null
+                                ? loadingProgress.cumulativeBytesLoaded /
+                                      loadingProgress.expectedTotalBytes!
+                                : null,
+                          ),
+                        );
+                      },
                     ),
                   )
-                : null,
+                : Center(
+                    child: Text(
+                      _getInitials(profile.displayName ?? profile.email ?? '?'),
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.deepPurple,
+                      ),
+                    ),
+                  ),
           ),
         ),
         if (_isUploading)
@@ -193,7 +310,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.black.withOpacity(0.5),
+                color: Colors.black.withValues(alpha: 0.5),
               ),
               child: const Center(
                 child: CircularProgressIndicator(color: Colors.white),
@@ -205,7 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             bottom: 0,
             right: 0,
             child: GestureDetector(
-              onTap: _pickAndUploadImage,
+              onTap: () => _showPhotoOptions(profile.photoUrl != null),
               child: Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -242,7 +359,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 10,
             spreadRadius: 2,
           ),
@@ -286,7 +403,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 10,
             spreadRadius: 2,
           ),
@@ -337,7 +454,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 10,
             spreadRadius: 2,
           ),
@@ -387,6 +504,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onChanged: (val) =>
                 _updateNotificationSetting('expenseReminders', val),
           ),
+          const Divider(height: 1),
+          _buildSwitchTile(
+            icon: Icons.chat_bubble_rounded,
+            title: 'Chat Notifications',
+            subtitle: 'Get notified about new messages',
+            value: profile.chatNotificationsEnabled,
+            color: Colors.orange,
+            onChanged: (val) =>
+                _updateNotificationSetting('chatNotifications', val),
+          ),
+          const Divider(height: 1),
+          _buildSwitchTile(
+            icon: Icons.payment_rounded,
+            title: 'Expense/Payment Alerts',
+            subtitle: 'Get alerts for expense add/edit/delete',
+            value: profile.expensePaymentAlertsEnabled,
+            color: Colors.teal,
+            onChanged: (val) =>
+                _updateNotificationSetting('expensePaymentAlerts', val),
+          ),
         ],
       ),
     );
@@ -400,7 +537,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 10,
             spreadRadius: 2,
           ),
@@ -441,7 +578,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: 0.1),
             blurRadius: 10,
             spreadRadius: 2,
           ),
@@ -484,13 +621,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const Divider(height: 1),
-          _buildProfileTile(
-            icon: Icons.system_update_rounded,
-            title: 'Update App',
-            value: 'Download the latest version',
-            color: Colors.orange,
-            onTap: () => _showUpdateDialog(context),
-          ),
         ],
       ),
     );
@@ -508,7 +638,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       leading: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(icon, color: color, size: 24),
@@ -543,7 +673,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       secondary: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(icon, color: color, size: 24),
@@ -562,7 +692,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       value: value,
       onChanged: onChanged,
-      activeColor: color,
+      activeThumbColor: color,
     );
   }
 
@@ -592,8 +722,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             );
 
-            if (confirmed == true && mounted) {
-              await context.read<AuthProvider>().signOut();
+            if (confirmed == true) {
+              if (!context.mounted) return;
+              try {
+                await context.read<AuthProvider>().signOut();
+                if (!context.mounted) return;
+                // Navigate back to login
+                Navigator.of(
+                  context,
+                ).pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('Logout failed: $e')));
+              }
             }
           },
           style: ElevatedButton.styleFrom(
@@ -653,88 +796,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
-      }
-    }
-  }
-
-  Future<void> _showUpdateDialog(BuildContext context) async {
-    // TODO: Replace this URL with your actual app download link
-    const String downloadUrl =
-        'https://github.com/mohdrazakhan/oneRoom---Roommate-management-application/releases/latest';
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.system_update_rounded,
-                color: Colors.orange,
-                size: 28,
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text('Update Available'),
-          ],
-        ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'A new version of One Room is available!',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-            ),
-            SizedBox(height: 12),
-            Text(
-              'Download the latest version to get new features, improvements, and bug fixes.',
-              style: TextStyle(fontSize: 14, color: Colors.black87),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Later'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(context, true),
-            icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('Download'),
-            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        final Uri url = Uri.parse(downloadUrl);
-        if (await canLaunchUrl(url)) {
-          await launchUrl(url, mode: LaunchMode.externalApplication);
-        } else {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Unable to open download link'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-          );
-        }
       }
     }
   }

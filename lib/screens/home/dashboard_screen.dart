@@ -5,6 +5,7 @@ import '../../providers/rooms_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/room_card.dart';
 import '../../services/firestore_service.dart';
+import '../../constants.dart';
 import '../expenses/expenses_list_screen.dart';
 import '../tasks/tasks_home_screen.dart';
 import '../tasks/my_tasks_dashboard.dart';
@@ -13,6 +14,7 @@ import 'create_room_screen.dart';
 import 'join_room_screen.dart';
 import 'enhanced_room_settings_screen.dart';
 import '../chat/chat_screen.dart';
+import 'all_members_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -61,21 +63,40 @@ class DashboardScreen extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              profile?.displayName ??
-                                  user?.displayName ??
-                                  'Roommate',
-                              style: const TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Builder(
+                              builder: (context) {
+                                final displayName =
+                                    profile?.displayName ??
+                                    user?.displayName ??
+                                    'Roommate';
+                                return Text(
+                                  displayName,
+                                  style: const TextStyle(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),
                         PopupMenuButton<String>(
                           onSelected: (value) async {
                             if (value == 'logout') {
-                              await authProvider.signOut();
+                              try {
+                                await authProvider.signOut();
+                                if (!context.mounted) return;
+                                // Navigate back to login
+                                Navigator.of(context).pushNamedAndRemoveUntil(
+                                  AppRoutes.login,
+                                  (route) => false,
+                                );
+                              } catch (e) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Logout failed: $e')),
+                                );
+                              }
                             } else if (value == 'profile') {
                               Navigator.push(
                                 context,
@@ -123,28 +144,54 @@ class DashboardScreen extends StatelessWidget {
                                 ),
                               ],
                             ),
-                            child: CircleAvatar(
-                              radius: 28,
-                              backgroundColor: Theme.of(
-                                context,
-                              ).colorScheme.primary,
-                              backgroundImage: user?.photoURL != null
-                                  ? NetworkImage(user!.photoURL!)
-                                  : null,
-                              child: user?.photoURL == null
-                                  ? Text(
-                                      _getInitials(
-                                        profile?.displayName ??
-                                            user?.displayName ??
-                                            'R',
-                                      ),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    )
-                                  : null,
+                            child: Builder(
+                              builder: (context) {
+                                final fallbackInitials = _getInitials(
+                                  profile?.displayName ??
+                                      user?.displayName ??
+                                      'R',
+                                );
+
+                                return CircleAvatar(
+                                  radius: 28,
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.primary,
+                                  child: user?.photoURL != null
+                                      ? ClipOval(
+                                          child: Image.network(
+                                            user!.photoURL!,
+                                            fit: BoxFit.cover,
+                                            width: 56,
+                                            height: 56,
+                                            errorBuilder:
+                                                (context, error, stackTrace) {
+                                                  return Center(
+                                                    child: Text(
+                                                      fallbackInitials,
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 20,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                          ),
+                                        )
+                                      : Center(
+                                          child: Text(
+                                            fallbackInitials,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                );
+                              },
                             ),
                           ),
                         ),
@@ -178,8 +225,8 @@ class DashboardScreen extends StatelessWidget {
         onPressed: () {
           _showRoomOptionsMenu(context);
         },
-        child: const Icon(Icons.add_rounded, size: 28),
         elevation: 8,
+        child: const Icon(Icons.add_rounded, size: 28),
       ),
     );
   }
@@ -309,11 +356,19 @@ class DashboardScreen extends StatelessWidget {
             height: 40,
             color: Colors.white.withValues(alpha: 0.3),
           ),
-          _buildStatItem(
-            context,
-            Icons.people_rounded,
-            _getTotalMembers(roomsProvider).toString(),
-            'Members',
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AllMembersScreen()),
+              );
+            },
+            child: _buildStatItem(
+              context,
+              Icons.people_rounded,
+              _getTotalMembers(roomsProvider).toString(),
+              'Members',
+            ),
           ),
           Container(
             width: 1,

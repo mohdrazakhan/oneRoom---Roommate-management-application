@@ -13,6 +13,8 @@ class UserProfile {
   final bool notificationsEnabled;
   final bool taskRemindersEnabled;
   final bool expenseRemindersEnabled;
+  final bool chatNotificationsEnabled;
+  final bool expensePaymentAlertsEnabled;
 
   UserProfile({
     required this.uid,
@@ -26,6 +28,8 @@ class UserProfile {
     this.notificationsEnabled = true,
     this.taskRemindersEnabled = true,
     this.expenseRemindersEnabled = true,
+    this.chatNotificationsEnabled = true,
+    this.expensePaymentAlertsEnabled = true,
   }) : joinedRooms = joinedRooms ?? [];
 
   factory UserProfile.fromDoc(DocumentSnapshot doc) {
@@ -44,6 +48,8 @@ class UserProfile {
       notificationsEnabled: data['notificationsEnabled'] ?? true,
       taskRemindersEnabled: data['taskRemindersEnabled'] ?? true,
       expenseRemindersEnabled: data['expenseRemindersEnabled'] ?? true,
+      chatNotificationsEnabled: data['chatNotificationsEnabled'] ?? true,
+      expensePaymentAlertsEnabled: data['expensePaymentAlertsEnabled'] ?? true,
     );
   }
 
@@ -62,6 +68,8 @@ class UserProfile {
       notificationsEnabled: map['notificationsEnabled'] ?? true,
       taskRemindersEnabled: map['taskRemindersEnabled'] ?? true,
       expenseRemindersEnabled: map['expenseRemindersEnabled'] ?? true,
+      chatNotificationsEnabled: map['chatNotificationsEnabled'] ?? true,
+      expensePaymentAlertsEnabled: map['expensePaymentAlertsEnabled'] ?? true,
     );
   }
 
@@ -79,6 +87,8 @@ class UserProfile {
       'notificationsEnabled': notificationsEnabled,
       'taskRemindersEnabled': taskRemindersEnabled,
       'expenseRemindersEnabled': expenseRemindersEnabled,
+      'chatNotificationsEnabled': chatNotificationsEnabled,
+      'expensePaymentAlertsEnabled': expensePaymentAlertsEnabled,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -96,6 +106,8 @@ class UserProfile {
     bool? notificationsEnabled,
     bool? taskRemindersEnabled,
     bool? expenseRemindersEnabled,
+    bool? chatNotificationsEnabled,
+    bool? expensePaymentAlertsEnabled,
   }) => UserProfile(
     uid: uid ?? this.uid,
     displayName: displayName ?? this.displayName,
@@ -109,5 +121,9 @@ class UserProfile {
     taskRemindersEnabled: taskRemindersEnabled ?? this.taskRemindersEnabled,
     expenseRemindersEnabled:
         expenseRemindersEnabled ?? this.expenseRemindersEnabled,
+    chatNotificationsEnabled:
+        chatNotificationsEnabled ?? this.chatNotificationsEnabled,
+    expensePaymentAlertsEnabled:
+        expensePaymentAlertsEnabled ?? this.expensePaymentAlertsEnabled,
   );
 }

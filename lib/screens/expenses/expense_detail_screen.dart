@@ -11,10 +11,10 @@ class ExpenseDetailScreen extends StatelessWidget {
   final Expense expense;
 
   const ExpenseDetailScreen({
-    Key? key,
+    super.key,
     required this.roomId,
     required this.expense,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -113,7 +113,7 @@ class ExpenseDetailScreen extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Color(category.colorValue).withOpacity(0.2),
+                  color: Color(category.colorValue).withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(

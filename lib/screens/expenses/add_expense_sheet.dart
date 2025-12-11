@@ -12,8 +12,7 @@ class AddExpenseSheet extends StatefulWidget {
   final String roomId;
   final Expense? expense; // For editing
 
-  const AddExpenseSheet({Key? key, required this.roomId, this.expense})
-    : super(key: key);
+  const AddExpenseSheet({super.key, required this.roomId, this.expense});
 
   @override
   State<AddExpenseSheet> createState() => _AddExpenseSheetState();
@@ -29,12 +28,12 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
   List<String> _roomMembers = [];
   Set<String> _selectedMembers = {};
   bool _isEqualSplit = true;
-  Map<String, TextEditingController> _customAmountControllers = {};
+  final Map<String, TextEditingController> _customAmountControllers = {};
   File? _receiptImage;
   bool _isLoading = false;
   // Multi-payer support
   Map<String, double> _payers = {}; // uid -> contributed amount
-  Map<String, TextEditingController> _payerControllers = {};
+  final Map<String, TextEditingController> _payerControllers = {};
 
   @override
   void initState() {
@@ -85,10 +84,12 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
     _descriptionController.dispose();
     _amountController.dispose();
     _notesController.dispose();
-    _customAmountControllers.values.forEach(
-      (controller) => controller.dispose(),
-    );
-    _payerControllers.values.forEach((c) => c.dispose());
+    for (final controller in _customAmountControllers.values) {
+      controller.dispose();
+    }
+    for (final c in _payerControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -282,7 +283,7 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
                               },
                               selectedColor: Color(
                                 cat.colorValue,
-                              ).withOpacity(0.3),
+                              ).withValues(alpha: 0.3),
                             );
                           }),
                           // Add custom category chip

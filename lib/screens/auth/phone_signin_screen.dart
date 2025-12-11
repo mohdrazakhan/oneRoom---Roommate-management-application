@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:provider/provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../widgets/primary_button.dart';
 
 class PhoneSignInScreen extends StatefulWidget {
@@ -37,34 +39,31 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
     setState(() => _loading = true);
 
     try {
-      await FirebaseAuth.instance.verifyPhoneNumber(
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+      await authProvider.sendPhoneVerificationCode(
         phoneNumber: fullPhone,
-        verificationCompleted: (PhoneAuthCredential credential) async {
-          // Auto-verification (Android only)
-          try {
-            await FirebaseAuth.instance.signInWithCredential(credential);
-            if (mounted) {
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          } catch (e) {
-            if (mounted) {
-              _showMessage('Auto-verification failed: ${e.toString()}');
-            }
-          }
-        },
-        verificationFailed: (FirebaseAuthException e) {
+        verificationCompleted:
+            (firebase_auth.PhoneAuthCredential credential) async {
+              // Auto-verification (Android only)
+              try {
+                debugPrint('✅ Phone auto-verification successful');
+                await authProvider.signInWithPhoneCredential(credential);
+                // Don't navigate manually - AuthWrapper will handle navigation
+              } on firebase_auth.FirebaseAuthException catch (e) {
+                if (mounted) {
+                  _showMessage(_getPhoneAuthErrorMessage(e));
+                }
+              } catch (e) {
+                if (mounted) {
+                  _showMessage('Auto-verification failed: ${e.toString()}');
+                }
+              }
+            },
+        verificationFailed: (firebase_auth.FirebaseAuthException e) {
           if (mounted) {
             setState(() => _loading = false);
-            String errorMsg = 'Verification failed';
-            if (e.code == 'invalid-phone-number') {
-              errorMsg =
-                  'Invalid phone number format. Please check and try again.';
-            } else if (e.code == 'too-many-requests') {
-              errorMsg = 'Too many requests. Please try again later.';
-            } else {
-              errorMsg = e.message ?? 'Verification failed';
-            }
-            _showMessage(errorMsg);
+            _showMessage(_getPhoneAuthErrorMessage(e));
           }
         },
         codeSent: (String verificationId, int? resendToken) {
@@ -83,8 +82,12 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
             setState(() => _loading = false);
           }
         },
-        timeout: const Duration(seconds: 60),
       );
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+        _showMessage(_getPhoneAuthErrorMessage(e));
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
@@ -108,20 +111,44 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
     setState(() => _loading = true);
 
     try {
-      final credential = PhoneAuthProvider.credential(
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+      final credential = firebase_auth.PhoneAuthProvider.credential(
         verificationId: _verificationId!,
         smsCode: code,
       );
-      await FirebaseAuth.instance.signInWithCredential(credential);
+
+      await authProvider.signInWithPhoneCredential(credential);
+      // Don't navigate manually - AuthWrapper will handle navigation
+    } on firebase_auth.FirebaseAuthException catch (e) {
       if (mounted) {
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        setState(() => _loading = false);
+        _showMessage(_getPhoneAuthErrorMessage(e));
       }
-    } on FirebaseAuthException catch (e) {
+    } catch (e) {
       if (mounted) {
-        _showMessage(e.message ?? 'Verification failed');
+        setState(() => _loading = false);
+        _showMessage('Verification failed: ${e.toString()}');
       }
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _getPhoneAuthErrorMessage(firebase_auth.FirebaseAuthException e) {
+    switch (e.code) {
+      case 'invalid-phone-number':
+        return 'Invalid phone number format. Please check and try again.';
+      case 'too-many-requests':
+        return 'Too many requests. Please try again later.';
+      case 'invalid-verification-code':
+        return 'Invalid verification code. Please try again.';
+      case 'session-expired':
+        return 'Verification code expired. Please request a new code.';
+      case 'app-not-authorized':
+        return 'App is not authorized for phone authentication. Please check Firebase configuration.';
+      case 'missing-phone-number':
+        return 'Phone number is missing.';
+      default:
+        return e.message ?? 'Phone authentication failed. Please try again.';
     }
   }
 
@@ -141,8 +168,8 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.primary.withOpacity(0.12),
-              Theme.of(context).colorScheme.secondary.withOpacity(0.10),
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.10),
             ],
           ),
         ),

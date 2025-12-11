@@ -89,7 +89,7 @@ class ExpenseAuditLogScreen extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: _getActionColor(log.action).withOpacity(0.1),
+                  color: _getActionColor(log.action).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(

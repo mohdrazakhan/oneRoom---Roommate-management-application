@@ -39,7 +39,7 @@ class TasksProvider with ChangeNotifier {
         .add({
           'name': name,
           'iconCodePoint': icon.codePoint,
-          'colorValue': color.value,
+          'colorValue': color.toARGB32(),
           'roomId': roomId,
           'createdAt': FieldValue.serverTimestamp(),
         });

@@ -138,7 +138,7 @@ class TasksHomeScreen extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 1,
-      shadowColor: category.color.withOpacity(0.2),
+      shadowColor: category.color.withValues(alpha: 0.2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         onTap: () => Navigator.push(
@@ -155,8 +155,8 @@ class TasksHomeScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(
               colors: [
-                category.color.withOpacity(0.08),
-                category.color.withOpacity(0.02),
+                category.color.withValues(alpha: 0.08),
+                category.color.withValues(alpha: 0.02),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -169,7 +169,7 @@ class TasksHomeScreen extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: category.color.withOpacity(0.15),
+                    color: category.color.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Icon(category.icon, color: category.color, size: 28),

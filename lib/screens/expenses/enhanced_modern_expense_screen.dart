@@ -653,7 +653,7 @@ class _EnhancedModernExpenseScreenState
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.1),
+                          color: Colors.blue.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(Icons.people, color: Colors.blue),
@@ -762,7 +762,7 @@ class _EnhancedModernExpenseScreenState
                                     isDense: true,
                                     filled: true,
                                     fillColor: isAuto
-                                        ? Colors.blue.withOpacity(0.1)
+                                        ? Colors.blue.withValues(alpha: 0.1)
                                         : (isSelected
                                               ? Colors.white
                                               : Colors.grey[100]),
@@ -928,7 +928,7 @@ class _EnhancedModernExpenseScreenState
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: isSelected
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
               : Colors.grey[100],
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
@@ -1019,7 +1019,7 @@ class _EnhancedModernExpenseScreenState
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
+                      color: Colors.orange.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.orange),
                     ),
@@ -1363,7 +1363,7 @@ class _EnhancedModernExpenseScreenState
 
             // Category
             DropdownButtonFormField<String>(
-              value: _category,
+              initialValue: _category,
               decoration: InputDecoration(
                 labelText: 'Category',
                 prefixIcon: const Icon(Icons.category_outlined),

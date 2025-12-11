@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // lib/screens/tasks/create_task_sheet.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -175,7 +176,7 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: widget.category.color.withOpacity(0.15),
+                        color: widget.category.color.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
@@ -265,7 +266,9 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
                       onSelected: (selected) {
                         setState(() => _frequency = freq);
                       },
-                      selectedColor: widget.category.color.withOpacity(0.2),
+                      selectedColor: widget.category.color.withValues(
+                        alpha: 0.2,
+                      ),
                       labelStyle: TextStyle(
                         color: isSelected
                             ? widget.category.color
@@ -296,7 +299,9 @@ class _CreateTaskSheetState extends State<CreateTaskSheet> {
                       onSelected: (selected) {
                         setState(() => _rotationType = type);
                       },
-                      selectedColor: widget.category.color.withOpacity(0.2),
+                      selectedColor: widget.category.color.withValues(
+                        alpha: 0.2,
+                      ),
                       labelStyle: TextStyle(
                         color: isSelected
                             ? widget.category.color

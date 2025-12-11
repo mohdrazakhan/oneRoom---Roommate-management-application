@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/primary_button.dart';
 import '../../utils/validators.dart';
-import '../../constants.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -39,9 +38,7 @@ class _SignupScreenState extends State<SignupScreen> {
         password: _passCtrl.text.trim(),
         displayName: _nameCtrl.text.trim(),
       );
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
-      }
+      // Don't navigate manually - AuthWrapper will handle navigation when auth state changes
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -62,8 +59,8 @@ class _SignupScreenState extends State<SignupScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.primary.withOpacity(0.12),
-              Theme.of(context).colorScheme.secondary.withOpacity(0.10),
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.10),
             ],
           ),
         ),

@@ -412,7 +412,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                       final memberName =
                           profile?['displayName'] ?? 'Member ${index + 1}';
                       final memberEmail =
-                          profile?['email'] ?? memberId.substring(0, 8) + '...';
+                          profile?['email'] ?? '${memberId.substring(0, 8)}...';
 
                       return Column(
                         children: [

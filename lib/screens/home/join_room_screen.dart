@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../providers/rooms_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
@@ -40,6 +42,8 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
       final roomCode = _roomCodeController.text.trim();
       final roomData = await _firestoreService.getRoomById(roomCode);
 
+      if (!mounted) return;
+
       if (roomData == null) {
         setState(() {
           _errorMessage = 'Room not found. Please check the room code.';
@@ -70,6 +74,18 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
         _errorMessage = 'Error: ${e.toString()}';
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _scanQRCode() async {
+    final result = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (context) => const QRScannerScreen()),
+    );
+
+    if (result != null && mounted) {
+      _roomCodeController.text = result;
+      _lookupRoom();
     }
   }
 
@@ -191,15 +207,27 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
                       labelText: 'Room Code',
                       hintText: 'Paste room code here',
                       prefixIcon: const Icon(Icons.vpn_key_rounded),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.content_paste_rounded),
-                        tooltip: 'Paste from clipboard',
-                        onPressed: () async {
-                          final data = await Clipboard.getData('text/plain');
-                          if (data?.text != null) {
-                            _roomCodeController.text = data!.text!.trim();
-                          }
-                        },
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.qr_code_scanner_rounded),
+                            tooltip: 'Scan QR Code',
+                            onPressed: _scanQRCode,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.content_paste_rounded),
+                            tooltip: 'Paste from clipboard',
+                            onPressed: () async {
+                              final data = await Clipboard.getData(
+                                'text/plain',
+                              );
+                              if (data?.text != null) {
+                                _roomCodeController.text = data!.text!.trim();
+                              }
+                            },
+                          ),
+                        ],
                       ),
                     ),
                     validator: (value) {
@@ -477,6 +505,180 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
           Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 12),
           Expanded(child: Text(text, style: const TextStyle(fontSize: 15))),
+        ],
+      ),
+    );
+  }
+}
+
+// QR Scanner Screen
+class QRScannerScreen extends StatefulWidget {
+  const QRScannerScreen({super.key});
+
+  @override
+  State<QRScannerScreen> createState() => _QRScannerScreenState();
+}
+
+class _QRScannerScreenState extends State<QRScannerScreen> {
+  MobileScannerController cameraController = MobileScannerController();
+  bool _hasScanned = false;
+  final ImagePicker _imagePicker = ImagePicker();
+
+  @override
+  void dispose() {
+    cameraController.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_hasScanned) return;
+
+    final List<Barcode> barcodes = capture.barcodes;
+    if (barcodes.isEmpty) return;
+
+    final String? code = barcodes.first.rawValue;
+    if (code != null && code.isNotEmpty) {
+      setState(() => _hasScanned = true);
+      Navigator.pop(context, code);
+    }
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+      );
+
+      if (image == null || !mounted) return;
+
+      // Analyze the image for QR code
+      final result = await cameraController.analyzeImage(image.path);
+
+      if (!mounted) return;
+
+      if (result != null && result.barcodes.isNotEmpty) {
+        final String? code = result.barcodes.first.rawValue;
+        if (code != null && code.isNotEmpty) {
+          setState(() => _hasScanned = true);
+          Navigator.pop(context, code);
+        } else {
+          _showError('No QR code found in the image');
+        }
+      } else {
+        _showError('No QR code found in the image');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('Error scanning image: ${e.toString()}');
+      }
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Scan QR Code'),
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on),
+            tooltip: 'Toggle Flash',
+            onPressed: () => cameraController.toggleTorch(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.cameraswitch),
+            tooltip: 'Switch Camera',
+            onPressed: () => cameraController.switchCamera(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.photo_library),
+            tooltip: 'Pick from Gallery',
+            onPressed: _pickImageFromGallery,
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(controller: cameraController, onDetect: _onDetect),
+          // Scanning overlay
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.5),
+                width: 2,
+              ),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 250,
+                    height: 250,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 3,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Position QR code within frame',
+                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Gallery button at bottom
+          Positioned(
+            bottom: 40,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: ElevatedButton.icon(
+                onPressed: _pickImageFromGallery,
+                icon: const Icon(Icons.photo_library),
+                label: const Text('Pick from Gallery'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 32,
+                    vertical: 16,
+                  ),
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

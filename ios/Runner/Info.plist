@@ -13,7 +13,7 @@
 		<key>CFBundleInfoDictionaryVersion</key>
 		<string>6.0</string>
 		<key>CFBundleName</key>
-		<string>one_room</string>
+		<string>One Room</string>
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
 		<key>CFBundleShortVersionString</key>
@@ -43,16 +43,16 @@
 		</array>
 		<key>CADisableMinimumFrameDurationOnPhone</key>
 		<true/>
-		<key>UIApplicationSupportsIndirectInputEvents</key>
-		<true/>
-		<!-- Permissions for picking images from the photo library / camera -->
-		<key>NSPhotoLibraryUsageDescription</key>
-		<string>This app needs access to your photo library to let you choose a profile picture.</string>
-		<key>NSCameraUsageDescription</key>
-		<string>This app uses the camera to take a new profile picture.</string>
-		<key>UIStatusBarHidden</key>
-		<true/>
-		<key>UIViewControllerBasedStatusBarAppearance</key>
-		<false/>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<!-- Permissions for picking images from the photo library / camera -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs access to your photo library to pick images for profile pictures and scan QR codes from saved images.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera to take profile pictures and scan QR codes to join rooms.</string>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
 	</dict>
 </plist>

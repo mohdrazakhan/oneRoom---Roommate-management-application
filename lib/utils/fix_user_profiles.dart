@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // Utility to fix user profiles with missing displayNames
 // This should be run once to update existing users
 

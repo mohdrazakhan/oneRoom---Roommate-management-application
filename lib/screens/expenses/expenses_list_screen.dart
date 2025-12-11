@@ -305,8 +305,8 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
         onPressed: () {
           _showExpenseOptionsMenu(context);
         },
-        child: const Icon(Icons.add_rounded, size: 28),
         elevation: 8,
+        child: const Icon(Icons.add_rounded, size: 28),
       ),
     );
   }

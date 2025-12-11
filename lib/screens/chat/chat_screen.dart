@@ -15,6 +15,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/chat_service.dart';
 import '../../services/firestore_service.dart';
 import '../expenses/expense_detail_screen.dart';
+import '../tasks/category_tasks_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String roomId;
@@ -27,6 +28,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _chat = ChatService();
+  final _firestore = FirestoreService();
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   bool _sending = false;
@@ -238,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // Fetch expense data and navigate to detail screen
       final firestore = FirestoreService();
       final expMap = await firestore.getExpense(widget.roomId, id);
+      if (!mounted) return;
       if (expMap != null) {
         final expense = Expense.fromMap(expMap, id);
         Navigator.push(
@@ -247,17 +250,40 @@ class _ChatScreenState extends State<ChatScreen> {
                 ExpenseDetailScreen(roomId: widget.roomId, expense: expense),
           ),
         );
-      } else {
+      } else if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Expense not found.')));
       }
     } else if (type == 'task') {
-      // TODO: Implement navigation to TaskDetailScreen if available
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Open task: $id (not yet implemented)')),
-      );
-    } else {
+      // Navigate to the tasks screen (CategoryTasksScreen shows all tasks)
+      final task = await _firestore.getTask(widget.roomId, id);
+      if (task != null && mounted) {
+        // Get the category for this task
+        final category = await _firestore.getCategory(
+          widget.roomId,
+          task.categoryId,
+        );
+        if (category != null && mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => CategoryTasksScreen(
+                category: category,
+                roomId: widget.roomId,
+              ),
+            ),
+          );
+        } else if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Task category not found.')),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Task not found.')));
+      }
+    } else if (mounted) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Unknown link type: $type')));
@@ -984,7 +1010,7 @@ class _MessageBubble extends StatelessWidget {
                 child: Text(
                   '(edited)',
                   style: TextStyle(
-                    color: fg.withOpacity(0.6),
+                    color: fg.withValues(alpha: 0.6),
                     fontSize: 11,
                     fontStyle: FontStyle.italic,
                   ),
