@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../widgets/primary_button.dart';
 import '../../utils/validators.dart';
 import '../../constants.dart';
+import '../../app.dart';
 import 'signup_screen.dart';
 import 'forgot_password_screen.dart';
 import 'phone_signin_screen.dart';
@@ -60,6 +61,12 @@ class _LoginScreenState extends State<LoginScreen> {
             const SnackBar(content: Text('Google sign-in cancelled')),
           );
         }
+      } else {
+        // Navigate immediately to dashboard to avoid being stuck on login while
+        // auth state propagation completes. AuthWrapper will keep things in sync.
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed(MyApp.routeDashboard);
+        }
       }
       // Don't navigate manually - AuthWrapper will handle navigation when auth state changes
       // The AuthProvider listens to auth state changes and will trigger a rebuild
@@ -67,11 +74,23 @@ class _LoginScreenState extends State<LoginScreen> {
       _showMessage(_firebaseAuthErrorMessage(e));
     } catch (e) {
       final errorMsg = e.toString();
-      // Check if it's the emulator Google Play Services error
-      if (errorMsg.contains('ApiException: 10')) {
+      // Check if it's a Google Play Services error
+      if (errorMsg.contains('ApiException: 7') ||
+          errorMsg.contains('NeedPermission')) {
+        _showMessage(
+          'Google Play Services error. Please:\n'
+          '1. Ensure you\'re on a physical device with Google Play Services installed\n'
+          '2. Or: On emulator, update Google Play Services and ensure network connectivity\n'
+          '3. Try: Sign out from Google account and sign back in',
+        );
+      } else if (errorMsg.contains('ApiException: 10')) {
         _showMessage(
           'Google Sign-In requires a physical device or Google Play Services. '
           'Please use Email/Password login or Phone authentication for testing on emulator.',
+        );
+      } else if (errorMsg.contains('network_error')) {
+        _showMessage(
+          'Network error connecting to Google. Please check your internet connection and try again.',
         );
       } else {
         _showMessage('Error: $errorMsg');

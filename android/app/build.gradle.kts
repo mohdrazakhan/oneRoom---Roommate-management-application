@@ -1,26 +1,73 @@
-plugins {
-    id("com.android.application")
-    // START: FlutterFire Configuration
-    id("com.google.gms.google-services")
-    // END: FlutterFire Configuration
-    id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id("dev.flutter.flutter-gradle-plugin")
-}
-
+// android/app/build.gradle.kts
 import java.util.Properties
 import java.io.FileInputStream
 
+plugins {
+    id("com.android.application")
+    id("com.google.gms.google-services")   // Firebase (google-services.json)
+    id("kotlin-android")
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
+// -------------------------
+// Load keystore properties
+// -------------------------
+val keystorePropertiesFile = file("../../key.properties")
 val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    FileInputStream(keystorePropertiesFile).use { stream ->
+        keystoreProperties.load(stream)
+    }
 }
 
 android {
     namespace = "com.oneroom.app"
     compileSdk = 36
-    ndkVersion = flutter.ndkVersion
+
+    defaultConfig {
+        applicationId = "com.oneroom.app"
+        minSdk = flutter.minSdkVersion
+        targetSdk = 36
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+        multiDexEnabled = true
+    }
+
+    // -------------------------
+    // Signing configs (release)
+    // -------------------------
+    signingConfigs {
+        create("release") {
+            // key properties loaded from key.properties file
+            keyAlias = keystoreProperties["keyAlias"] as String? ?: "release"
+            keyPassword = keystoreProperties["keyPassword"] as String?
+            storeFile = keystoreProperties["storeFile"]?.let { file(it as String) }
+            storePassword = keystoreProperties["storePassword"] as String?
+        }
+    }
+
+    // -------------------------
+    // Build types
+    // -------------------------
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+
+            // Recommended: enable shrinking and minification for production
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                file("proguard-rules.pro")
+            )
+
+            // Optional: disable debug logs or set other release flags here
+        }
+
+        getByName("debug") {
+            // debug default configuration
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -29,41 +76,26 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+        jvmTarget = "11"
     }
-
-    defaultConfig {
-        applicationId = "com.oneroom.app"
-        minSdk = flutter.minSdkVersion
-        targetSdk = 36
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
-    }
-
-    signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties.getProperty("keyAlias")
-            keyPassword = keystoreProperties.getProperty("keyPassword")
-            val storeFilePath = keystoreProperties.getProperty("storeFile")
-            storeFile = if (storeFilePath != null) file(storeFilePath) else null
-            storePassword = keystoreProperties.getProperty("storePassword")
-        }
-    }
-
-    buildTypes {
-        release {
-            signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-        }
-    }
-}
-
-dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Core library desugaring for Java 8+ APIs
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
+    // Multidex support (safe for older devices)
+    implementation("androidx.multidex:multidex:2.0.1")
+
+    // Play Billing (for in-app purchases / remove ads)
+    implementation("com.android.billingclient:billing:7.0.0")
+
+    // Google Mobile Ads (AdMob)
+    implementation("com.google.android.gms:play-services-ads:22.2.0")
+
+    // Firebase handled by google-services plugin; add firebase libs in pubspec and dart code
 }

@@ -2,6 +2,7 @@
     <!-- Permissions for notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
@@ -14,7 +15,7 @@
     
     <application
     android:label="One Room"
-    android:name="${applicationName}"
+    android:name="androidx.multidex.MultiDexApplication"
     android:icon="@mipmap/ic_launcher">
 
     <meta-data

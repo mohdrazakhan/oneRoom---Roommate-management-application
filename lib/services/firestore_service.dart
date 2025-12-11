@@ -3,6 +3,7 @@
 // Firestore helper: rooms, expenses, users
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import '../Models/expense.dart';
 import '../Models/room_notification.dart';
 import '../Models/task.dart';
@@ -917,29 +918,92 @@ class FirestoreService {
 
     if (approve) {
       final currentAssignee = taskData['assignedTo'];
-
-      // Swap the assignees
-      await taskInstanceRef.update({
-        'assignedTo': requesterId,
-        'swapRequest.status': 'approved',
-        'swapRequest.approvedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Find the requester's task on the same date and swap
+      final taskId = taskData['taskId']; // The actual task definition
       final scheduledDate = taskData['scheduledDate'] as Timestamp;
+      final scheduledDateOnly = DateTime(
+        scheduledDate.toDate().year,
+        scheduledDate.toDate().month,
+        scheduledDate.toDate().day,
+      );
+
+      debugPrint(
+        '🔄 Swap: User($currentAssignee) ↔ Requester($requesterId) for task=$taskId',
+      );
+
+      // Find the requester's NEXT instance of the SAME TASK (on or after current date)
       final requesterTasksSnapshot = await _rooms
           .doc(roomId)
           .collection('taskInstances')
           .where('assignedTo', isEqualTo: requesterId)
-          .where('scheduledDate', isEqualTo: scheduledDate)
-          .limit(1)
+          .where('taskId', isEqualTo: taskId)
           .get();
 
-      if (requesterTasksSnapshot.docs.isNotEmpty) {
-        await requesterTasksSnapshot.docs.first.reference.update({
-          'assignedTo': currentAssignee,
-        });
+      // Client-side filter: find the next instance on or after the scheduled date
+      final requesterNextTask = requesterTasksSnapshot.docs.where((doc) {
+        final docDate = DateTime(
+          (doc['scheduledDate'] as Timestamp).toDate().year,
+          (doc['scheduledDate'] as Timestamp).toDate().month,
+          (doc['scheduledDate'] as Timestamp).toDate().day,
+        );
+        return docDate.compareTo(scheduledDateOnly) >= 0;
+      }).toList();
+
+      requesterNextTask.sort((a, b) {
+        final dateA = (a['scheduledDate'] as Timestamp).toDate();
+        final dateB = (b['scheduledDate'] as Timestamp).toDate();
+        return dateA.compareTo(dateB);
+      });
+
+      if (requesterNextTask.isEmpty) {
+        throw Exception('No upcoming instance found for requester to swap');
       }
+
+      // Swap the assignees for both task instances
+      final requesterTaskInstanceId = requesterNextTask.first.id;
+      final requesterScheduledDate = requesterNextTask.first['scheduledDate'];
+
+      debugPrint(
+        '✅ Swapping: User($currentAssignee, Dec ${scheduledDateOnly.day}) ↔ Requester($requesterId, Dec ${(requesterScheduledDate as Timestamp).toDate().day})',
+      );
+
+      // Fetch both user profiles once to avoid multiple calls
+      final requesterProfile = await getUserProfile(requesterId);
+      final requesterName = requesterProfile?['displayName'] ?? 'Member';
+      final currentUserProfile = await getUserProfile(currentAssignee);
+      final currentUserDisplayName =
+          currentUserProfile?['displayName'] ?? 'Member';
+
+      // Current user gets the requester's task instance
+      await taskInstanceRef.update({
+        'assignedTo': requesterId,
+        'swapRequest.status': 'approved',
+        'swapRequest.approvedAt': FieldValue.serverTimestamp(),
+        'swappedWith': {
+          'userId': requesterId,
+          'userName': requesterName,
+          'originalDate': requesterScheduledDate,
+          'swappedAt': FieldValue.serverTimestamp(),
+          'swappedBy': currentUserName,
+        },
+      });
+
+      // Requester gets the current user's task instance with swap info
+      await _rooms
+          .doc(roomId)
+          .collection('taskInstances')
+          .doc(requesterTaskInstanceId)
+          .update({
+            'assignedTo': currentAssignee,
+            'swappedWith': {
+              'userId': currentAssignee,
+              'userName': currentUserDisplayName,
+              'originalDate': scheduledDate,
+              'swappedAt': FieldValue.serverTimestamp(),
+              'swappedBy': currentUserName,
+            },
+            'swapRequest':
+                null, // Clear any pending swap request on requester's task
+          });
 
       // Create notification for the requester
       await createNotification(
@@ -1075,21 +1139,18 @@ class FirestoreService {
         final targetDate = today.add(Duration(days: dayOffset));
         final scheduledDate = Timestamp.fromDate(targetDate);
 
-        // Check if instance already exists for this task on this date
-        final existingInstances = await _rooms
+        // Use deterministic document ID to prevent duplicates: taskId_YYYYMMDD
+        final docId = _taskInstanceDocId(taskId, targetDate);
+
+        // Check if instance already exists using direct get (atomic, prevents race condition)
+        final existingDoc = await _rooms
             .doc(roomId)
             .collection('taskInstances')
-            .where('taskId', isEqualTo: taskId)
-            .limit(10)
+            .doc(docId)
             .get();
 
-        // Client-side filtering for the date to avoid composite index
-        final dateMatch = existingInstances.docs
-            .where((doc) => doc['scheduledDate'] == scheduledDate)
-            .toList();
-
-        if (dateMatch.isNotEmpty) {
-          continue; // Instance already exists
+        if (existingDoc.exists) {
+          continue; // Instance already exists, skip
         }
 
         // Calculate assignee based on rotation
@@ -1104,19 +1165,22 @@ class FirestoreService {
           assignedTo = memberIds[currentRotationIndex % memberIds.length];
         }
 
-        // Create task instance
-        await _rooms.doc(roomId).collection('taskInstances').add({
-          'taskId': taskId,
-          'roomId': roomId,
-          'title': title,
-          'categoryId': categoryId,
-          'assignedTo': assignedTo,
-          'scheduledDate': scheduledDate,
-          'timeSlot': timeSlot,
-          'estimatedMinutes': estimatedMinutes,
-          'isCompleted': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        // Create task instance with deterministic ID
+        await _rooms.doc(roomId).collection('taskInstances').doc(docId).set(
+          {
+            'taskId': taskId,
+            'roomId': roomId,
+            'title': title,
+            'categoryId': categoryId,
+            'assignedTo': assignedTo,
+            'scheduledDate': scheduledDate,
+            'timeSlot': timeSlot,
+            'estimatedMinutes': estimatedMinutes,
+            'isCompleted': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ); // merge=true prevents overwriting if doc exists
       }
     }
   }

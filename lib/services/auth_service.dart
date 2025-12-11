@@ -8,7 +8,12 @@ import 'package:flutter/foundation.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email', 'profile'],
+    forceCodeForRefreshToken: true,
+    serverClientId:
+        '30053537626-7lkjrf210smdeuivrr0ecnrir3hr4mrr.apps.googleusercontent.com',
+  );
 
   Future<User?> signInWithGoogle() async {
     try {
@@ -34,6 +39,10 @@ class AuthService {
       }
 
       debugPrint('✅ Got Google authentication tokens');
+      debugPrint('📱 ID Token: ${googleAuth.idToken?.substring(0, 20)}...');
+      debugPrint(
+        '📱 Access Token: ${googleAuth.accessToken?.substring(0, 20)}...',
+      );
 
       final credential = GoogleAuthProvider.credential(
         idToken: googleAuth.idToken,
@@ -50,6 +59,7 @@ class AuthService {
       rethrow;
     } catch (e) {
       debugPrint('❌ Google Sign-In Error: $e');
+      debugPrint('📍 Full error trace: ${e.toString()}');
       rethrow;
     }
   }

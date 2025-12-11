@@ -255,65 +255,103 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
     final isCompleted = taskData['isCompleted'] == true;
     final roomId = taskData['roomId'];
     final taskInstanceId = taskData['taskInstanceId'];
+    final swappedWith = taskData['swappedWith'] as Map<String, dynamic>?;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
-        ),
-        leading: Checkbox(
-          value: isCompleted,
-          onChanged: (value) {
-            if (value != null) {
-              _markTaskAsCompleted(roomId, taskInstanceId, value);
-            }
-          },
-          shape: const CircleBorder(),
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            decoration: isCompleted ? TextDecoration.lineThrough : null,
-            color: isCompleted ? Colors.grey : null,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Row(
+      child: Column(
+        children: [
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+            leading: Checkbox(
+              value: isCompleted,
+              onChanged: (value) {
+                if (value != null) {
+                  _markTaskAsCompleted(roomId, taskInstanceId, value);
+                }
+              },
+              shape: const CircleBorder(),
+            ),
+            title: Text(
+              title,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                decoration: isCompleted ? TextDecoration.lineThrough : null,
+                color: isCompleted ? Colors.grey : null,
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.home_outlined, size: 14, color: Colors.grey[600]),
-                const SizedBox(width: 4),
-                Text(
-                  roomName,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.home_outlined,
+                      size: 14,
+                      color: Colors.grey[600],
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      roomName,
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isCompleted ? Colors.green[50] : Colors.orange[50],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    isCompleted ? '✓ Completed' : '⏳ Pending',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isCompleted
+                          ? Colors.green[700]
+                          : Colors.orange[700],
+                    ),
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
+          ),
+          // Show swap info if task was swapped
+          if (swappedWith != null) ...[
+            const Divider(height: 1),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: isCompleted ? Colors.green[50] : Colors.orange[50],
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                isCompleted ? '✓ Completed' : '⏳ Pending',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: isCompleted ? Colors.green[700] : Colors.orange[700],
-                ),
+              padding: const EdgeInsets.all(12),
+              color: Colors.blue[50],
+              child: Row(
+                children: [
+                  Icon(Icons.swap_horiz, color: Colors.blue, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Swapped with ${swappedWith['userName'] ?? 'Member'} by ${swappedWith['swappedBy'] ?? 'Unknown'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[900],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -323,6 +361,7 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
     final roomName = taskData['roomName'] ?? 'Unknown Room';
     final dueDate = (taskData['scheduledDate'] as Timestamp?)?.toDate();
     final swapRequest = taskData['swapRequest'] as Map<String, dynamic>?;
+    final swappedWith = taskData['swappedWith'] as Map<String, dynamic>?;
     final roomId = taskData['roomId'];
     final taskInstanceId = taskData['taskInstanceId'];
 
@@ -420,6 +459,30 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
               ],
             ),
           ),
+          // Show swap info if task was swapped
+          if (swappedWith != null) ...[
+            const Divider(height: 1),
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: Colors.blue[50],
+              child: Row(
+                children: [
+                  Icon(Icons.swap_horiz, color: Colors.blue, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Swapped with ${swappedWith['userName'] ?? 'Member'} by ${swappedWith['swappedBy'] ?? 'Unknown'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[900],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (swapRequest != null) ...[
             const Divider(height: 1),
             _buildSwapRequestBanner(
