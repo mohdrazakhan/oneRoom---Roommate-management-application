@@ -1,6 +1,6 @@
 // android/app/build.gradle.kts
-import java.util.Properties
 import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -83,6 +83,59 @@ android {
 flutter {
     source = "../.."
 }
+
+fun registerFlutterApkCopyTask(variant: String) {
+    val capitalized = variant.replaceFirstChar { it.uppercaseChar() }
+    tasks.matching { it.name == "package$capitalized" }.configureEach {
+        doLast {
+            val flutterProjectDir = project.projectDir.parentFile?.parentFile
+                ?: error("Unable to locate Flutter project directory")
+            val targetDir = flutterProjectDir.resolve("build/app/outputs/flutter-apk")
+            if (!targetDir.exists()) {
+                targetDir.mkdirs()
+            }
+
+            val sourceApk = project.layout.buildDirectory
+                .dir("outputs/apk/$variant")
+                .map { it.file("app-$variant.apk").asFile }
+                .get()
+
+            if (sourceApk.exists()) {
+                val targetFile = targetDir.resolve("app-$variant.apk")
+                sourceApk.copyTo(targetFile, overwrite = true)
+            }
+        }
+    }
+}
+
+registerFlutterApkCopyTask("debug")
+registerFlutterApkCopyTask("release")
+
+fun registerFlutterBundleCopyTask(variant: String) {
+    val capitalized = variant.replaceFirstChar { it.uppercaseChar() }
+    tasks.matching { it.name == "bundle$capitalized" }.configureEach {
+        doLast {
+            val flutterProjectDir = project.projectDir.parentFile?.parentFile
+                ?: error("Unable to locate Flutter project directory")
+            val targetDir = flutterProjectDir.resolve("build/app/outputs/bundle/$variant")
+            if (!targetDir.exists()) {
+                targetDir.mkdirs()
+            }
+
+            val sourceBundle = project.layout.buildDirectory
+                .dir("outputs/bundle/$variant")
+                .map { it.file("app-$variant.aab").asFile }
+                .get()
+
+            if (sourceBundle.exists()) {
+                val targetFile = targetDir.resolve("app-$variant.aab")
+                sourceBundle.copyTo(targetFile, overwrite = true)
+            }
+        }
+    }
+}
+
+registerFlutterBundleCopyTask("release")
 
 dependencies {
     // Core library desugaring for Java 8+ APIs
