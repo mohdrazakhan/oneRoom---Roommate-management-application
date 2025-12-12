@@ -1,7 +1,16 @@
 // lib/Models/chat_message.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum ChatMessageType { text, image, video, audio, poll, reminder, link }
+enum ChatMessageType {
+  text,
+  image,
+  video,
+  audio,
+  poll,
+  reminder,
+  link,
+  sticker,
+}
 
 class ChatMessage {
   final String id;
@@ -36,6 +45,15 @@ class ChatMessage {
   final String? linkType; // 'expense' | 'task'
   final String? linkId;
 
+  // Sticker payload
+  final String? stickerCode; // emoji or sticker identifier
+
+  // Reply payload
+  final String? replyToId; // ID of the message being replied to
+  final String? replyToText; // Preview text of the replied message
+  final String? replyToSenderId; // Sender of the replied message
+  final String? replyToSenderName; // Name of sender of replied message
+
   ChatMessage({
     required this.id,
     required this.roomId,
@@ -57,6 +75,11 @@ class ChatMessage {
     this.remindExpenseId,
     this.linkType,
     this.linkId,
+    this.stickerCode,
+    this.replyToId,
+    this.replyToText,
+    this.replyToSenderId,
+    this.replyToSenderName,
   });
 
   factory ChatMessage.fromDoc(String id, Map<String, dynamic> data) {
@@ -74,6 +97,8 @@ class ChatMessage {
           return ChatMessageType.reminder;
         case 'link':
           return ChatMessageType.link;
+        case 'sticker':
+          return ChatMessageType.sticker;
         case 'text':
         default:
           return ChatMessageType.text;
@@ -111,6 +136,11 @@ class ChatMessage {
       remindExpenseId: data['remindExpenseId'] as String?,
       linkType: data['linkType'] as String?,
       linkId: data['linkId'] as String?,
+      stickerCode: data['stickerCode'] as String?,
+      replyToId: data['replyToId'] as String?,
+      replyToText: data['replyToText'] as String?,
+      replyToSenderId: data['replyToSenderId'] as String?,
+      replyToSenderName: data['replyToSenderName'] as String?,
     );
   }
 }

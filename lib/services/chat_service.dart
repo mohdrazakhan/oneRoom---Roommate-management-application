@@ -28,12 +28,18 @@ class ChatService {
                 (d) =>
                     ChatMessage.fromDoc(d.id, d.data() as Map<String, dynamic>),
               )
-              .where((m) => m.deleted != true)
               .toList(),
         );
   }
 
-  Future<void> sendText({required String roomId, required String text}) async {
+  Future<void> sendText({
+    required String roomId,
+    required String text,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderId,
+    String? replyToSenderName,
+  }) async {
     final uid = _auth.currentUser?.uid ?? '';
     await _roomChatRef(roomId).add({
       'roomId': roomId,
@@ -41,6 +47,10 @@ class ChatService {
       'type': 'text',
       'text': text.trim(),
       'createdAt': FieldValue.serverTimestamp(),
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToText != null) 'replyToText': replyToText,
+      if (replyToSenderId != null) 'replyToSenderId': replyToSenderId,
+      if (replyToSenderName != null) 'replyToSenderName': replyToSenderName,
     });
 
     // Send notification to room members
@@ -103,6 +113,10 @@ class ChatService {
     required String ext,
     required String contentType,
     required String kind, // 'image' | 'video' | 'audio'
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderId,
+    String? replyToSenderName,
   }) async {
     final uid = _auth.currentUser?.uid ?? '';
     final url = await _uploadFile(roomId, file, ext, contentType);
@@ -113,6 +127,33 @@ class ChatService {
       'mediaUrl': url,
       'mediaMime': contentType,
       'createdAt': FieldValue.serverTimestamp(),
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToText != null) 'replyToText': replyToText,
+      if (replyToSenderId != null) 'replyToSenderId': replyToSenderId,
+      if (replyToSenderName != null) 'replyToSenderName': replyToSenderName,
+    });
+  }
+
+  /// Send a sticker message
+  Future<void> sendSticker({
+    required String roomId,
+    required String stickerCode,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderId,
+    String? replyToSenderName,
+  }) async {
+    final uid = _auth.currentUser?.uid ?? '';
+    await _roomChatRef(roomId).add({
+      'roomId': roomId,
+      'senderId': uid,
+      'type': 'sticker',
+      'stickerCode': stickerCode,
+      'createdAt': FieldValue.serverTimestamp(),
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToText != null) 'replyToText': replyToText,
+      if (replyToSenderId != null) 'replyToSenderId': replyToSenderId,
+      if (replyToSenderName != null) 'replyToSenderName': replyToSenderName,
     });
   }
 

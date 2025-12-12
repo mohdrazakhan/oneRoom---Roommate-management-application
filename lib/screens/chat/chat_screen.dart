@@ -33,6 +33,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   bool _sending = false;
 
+  // Reply state
+  ChatMessage? _replyingTo;
+  String? _replyingToSenderName;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -40,21 +44,72 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  void _setReplyTo(ChatMessage message, String senderName) {
+    setState(() {
+      _replyingTo = message;
+      _replyingToSenderName = senderName;
+    });
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyingTo = null;
+      _replyingToSenderName = null;
+    });
+  }
+
   Future<void> _sendText() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+
+    // Clear immediately for better UX
+    _controller.clear();
+    final replyTo = _replyingTo;
+    final replyToSenderName = _replyingToSenderName;
+    _cancelReply();
+
     setState(() => _sending = true);
     try {
-      await _chat.sendText(roomId: widget.roomId, text: text);
-      _controller.clear();
+      await _chat.sendText(
+        roomId: widget.roomId,
+        text: text,
+        replyToId: replyTo?.id,
+        replyToText: replyTo?.text ?? _getMessagePreview(replyTo),
+        replyToSenderId: replyTo?.senderId,
+        replyToSenderName: replyToSenderName,
+      );
       _scrollToTop();
     } catch (e) {
       if (!mounted) return;
+      // Restore text if send failed
+      _controller.text = text;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to send: $e')));
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  String _getMessagePreview(ChatMessage? message) {
+    if (message == null) return '';
+    switch (message.type) {
+      case ChatMessageType.image:
+        return '📷 Photo';
+      case ChatMessageType.video:
+        return '🎥 Video';
+      case ChatMessageType.audio:
+        return '🎵 Audio';
+      case ChatMessageType.poll:
+        return '📊 Poll: ${message.pollQuestion ?? ""}';
+      case ChatMessageType.sticker:
+        return message.stickerCode ?? '😀';
+      case ChatMessageType.link:
+        return '🔗 ${message.linkType ?? "Link"}';
+      case ChatMessageType.reminder:
+        return '💰 Payment reminder';
+      default:
+        return message.text ?? '';
     }
   }
 
@@ -84,7 +139,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ext: _extFromPath(x.path),
         contentType: 'image/${_extFromPath(x.path)}',
         kind: 'image',
+        replyToId: _replyingTo?.id,
+        replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
+        replyToSenderId: _replyingTo?.senderId,
+        replyToSenderName: _replyingToSenderName,
       );
+      _cancelReply();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -110,7 +170,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ext: ext,
         contentType: mime,
         kind: 'video',
+        replyToId: _replyingTo?.id,
+        replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
+        replyToSenderId: _replyingTo?.senderId,
+        replyToSenderName: _replyingToSenderName,
       );
+      _cancelReply();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -136,7 +201,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ext: ext,
         contentType: mime,
         kind: 'audio',
+        replyToId: _replyingTo?.id,
+        replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
+        replyToSenderId: _replyingTo?.senderId,
+        replyToSenderName: _replyingToSenderName,
       );
+      _cancelReply();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -145,6 +215,43 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<void> _sendSticker(String stickerCode) async {
+    setState(() => _sending = true);
+    try {
+      await _chat.sendSticker(
+        roomId: widget.roomId,
+        stickerCode: stickerCode,
+        replyToId: _replyingTo?.id,
+        replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
+        replyToSenderId: _replyingTo?.senderId,
+        replyToSenderName: _replyingToSenderName,
+      );
+      _cancelReply();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to send sticker: $e')));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _showStickerPicker() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => _StickerPicker(
+        onStickerSelected: (sticker) {
+          Navigator.pop(context);
+          _sendSticker(sticker);
+        },
+      ),
+    );
   }
 
   String _extFromPath(String path) {
@@ -188,6 +295,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         optionIndex: idx,
                       ),
                       onOpenLink: (type, id) => _handleOpenLink(type, id),
+                      onReply: (msg, senderName) =>
+                          _setReplyTo(msg, senderName),
                     );
                   },
                 );
@@ -195,6 +304,14 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const Divider(height: 1),
+          // Reply preview bar
+          if (_replyingTo != null)
+            _ReplyPreviewBar(
+              replyingToName: _replyingToSenderName ?? 'Unknown',
+              replyingToText:
+                  _replyingTo!.text ?? _getMessagePreview(_replyingTo),
+              onCancel: _cancelReply,
+            ),
           _Composer(
             controller: _controller,
             onSend: _sendText,
@@ -203,6 +320,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onPickVideo: _pickVideo,
             onPickAudio: _pickAudio,
             onMore: _showMoreActions,
+            onSticker: _showStickerPicker,
           ),
         ],
       ),
@@ -639,6 +757,7 @@ class _Composer extends StatelessWidget {
   final VoidCallback onPickVideo;
   final VoidCallback onPickAudio;
   final VoidCallback onMore;
+  final VoidCallback onSticker;
   final bool sending;
 
   const _Composer({
@@ -648,6 +767,7 @@ class _Composer extends StatelessWidget {
     required this.onPickVideo,
     required this.onPickAudio,
     required this.onMore,
+    required this.onSticker,
     required this.sending,
   });
 
@@ -663,6 +783,12 @@ class _Composer extends StatelessWidget {
               icon: const Icon(Icons.attach_file_rounded),
               onPressed: sending ? null : () => _showAttachmentMenu(context),
               tooltip: 'Attach',
+            ),
+            // Sticker button
+            IconButton(
+              icon: const Icon(Icons.emoji_emotions_outlined),
+              onPressed: sending ? null : onSticker,
+              tooltip: 'Stickers',
             ),
             Expanded(
               child: TextField(
@@ -696,9 +822,6 @@ class _Composer extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Media uploads disabled on Free plan
-              // Uncomment when upgraded to Blaze plan
-              /*
               ListTile(
                 leading: Icon(
                   Icons.image_rounded,
@@ -733,7 +856,6 @@ class _Composer extends StatelessWidget {
                 },
               ),
               const Divider(),
-              */
               ListTile(
                 leading: Icon(
                   Icons.poll_rounded,
@@ -758,17 +880,20 @@ class _ChatMessageTile extends StatelessWidget {
   final bool isMe;
   final void Function(int optionIndex)? onVote;
   final void Function(String type, String id)? onOpenLink;
+  final void Function(ChatMessage message, String senderName)? onReply;
+
   const _ChatMessageTile({
     required this.message,
     required this.isMe,
     this.onVote,
     this.onOpenLink,
+    this.onReply,
   });
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Map<String, dynamic>?>(
-      future: isMe ? null : FirestoreService().getUserProfile(message.senderId),
+      future: FirestoreService().getUserProfile(message.senderId),
       builder: (context, snapshot) {
         final senderName =
             snapshot.data?['displayName'] as String? ?? 'Unknown';
@@ -818,8 +943,10 @@ class _ChatMessageTile extends StatelessWidget {
               _MessageBubble(
                 message: message,
                 isMe: isMe,
+                senderName: senderName,
                 onVote: onVote,
                 onOpenLink: onOpenLink,
+                onReply: onReply,
               ),
             ],
           ),
@@ -832,14 +959,18 @@ class _ChatMessageTile extends StatelessWidget {
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final bool isMe;
+  final String senderName;
   final void Function(int optionIndex)? onVote;
   final void Function(String type, String id)? onOpenLink;
+  final void Function(ChatMessage message, String senderName)? onReply;
 
   const _MessageBubble({
     required this.message,
     required this.isMe,
+    required this.senderName,
     this.onVote,
     this.onOpenLink,
+    this.onReply,
   });
 
   void _showMessageOptions(BuildContext context) async {
@@ -853,6 +984,12 @@ class _MessageBubble extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Reply option for all messages
+              ListTile(
+                leading: const Icon(Icons.reply),
+                title: const Text('Reply'),
+                onTap: () => Navigator.pop(context, 'reply'),
+              ),
               if (message.type == ChatMessageType.text && isMe)
                 ListTile(
                   leading: const Icon(Icons.edit),
@@ -868,30 +1005,36 @@ class _MessageBubble extends StatelessWidget {
                   ),
                   onTap: () => Navigator.pop(context, 'delete'),
                 ),
-              ListTile(
-                leading: const Icon(Icons.copy),
-                title: const Text('Copy Text'),
-                onTap: () => Navigator.pop(context, 'copy'),
-              ),
+              if (message.type == ChatMessageType.text)
+                ListTile(
+                  leading: const Icon(Icons.copy),
+                  title: const Text('Copy Text'),
+                  onTap: () => Navigator.pop(context, 'copy'),
+                ),
             ],
           ),
         );
       },
     );
 
-    if (choice == null || !context.mounted) return;
+    if (choice == null) return;
 
-    if (choice == 'edit') {
-      _editMessage(context);
+    if (choice == 'reply') {
+      // Call reply immediately - don't check context.mounted as it may cause issues
+      onReply?.call(message, senderName);
+    } else if (choice == 'edit') {
+      if (context.mounted) _editMessage(context);
     } else if (choice == 'delete') {
-      _deleteMessage(context);
+      if (context.mounted) _deleteMessage(context);
     } else if (choice == 'copy') {
       final text = message.text ?? '';
       if (text.isNotEmpty) {
         Clipboard.setData(ClipboardData(text: text));
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Text copied')));
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Text copied')));
+        }
       }
     }
   }
@@ -992,6 +1135,36 @@ class _MessageBubble extends StatelessWidget {
         : Theme.of(context).colorScheme.surfaceContainerHighest;
     final fg = isMe ? Colors.white : Theme.of(context).colorScheme.onSurface;
 
+    // Show deleted message placeholder
+    if (message.deleted) {
+      return Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.block, size: 16, color: Colors.grey[600]),
+              const SizedBox(width: 8),
+              Text(
+                'This message was deleted',
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     Widget child;
     switch (message.type) {
       case ChatMessageType.text:
@@ -1019,6 +1192,12 @@ class _MessageBubble extends StatelessWidget {
           ],
         );
         break;
+      case ChatMessageType.sticker:
+        child = Text(
+          message.stickerCode ?? '😀',
+          style: const TextStyle(fontSize: 64),
+        );
+        break;
       case ChatMessageType.image:
         child = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1035,6 +1214,27 @@ class _MessageBubble extends StatelessWidget {
                 fit: BoxFit.cover,
                 width: 240,
                 height: 180,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return SizedBox(
+                    width: 240,
+                    height: 180,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                            : null,
+                      ),
+                    ),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) => Container(
+                  width: 240,
+                  height: 180,
+                  color: Colors.grey[300],
+                  child: const Icon(Icons.broken_image, size: 48),
+                ),
               ),
             ),
           ],
@@ -1077,6 +1277,42 @@ class _MessageBubble extends StatelessWidget {
         break;
     }
 
+    // Build reply preview if this message is a reply
+    Widget? replyPreview;
+    if (message.replyToId != null && message.replyToId!.isNotEmpty) {
+      replyPreview = Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: fg.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(color: fg.withValues(alpha: 0.5), width: 3),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.replyToSenderName ?? 'Unknown',
+              style: TextStyle(
+                color: fg.withValues(alpha: 0.8),
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              message.replyToText ?? '',
+              style: TextStyle(color: fg.withValues(alpha: 0.7), fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      );
+    }
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
@@ -1089,7 +1325,9 @@ class _MessageBubble extends StatelessWidget {
             maxWidth: MediaQuery.of(context).size.width * 0.8,
           ),
           decoration: BoxDecoration(
-            color: bg,
+            color: message.type == ChatMessageType.sticker
+                ? Colors.transparent
+                : bg,
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(16),
               topRight: const Radius.circular(16),
@@ -1097,7 +1335,10 @@ class _MessageBubble extends StatelessWidget {
               bottomRight: Radius.circular(isMe ? 4 : 16),
             ),
           ),
-          child: child,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [if (replyPreview != null) replyPreview, child],
+          ),
         ),
       ),
     );
@@ -1350,5 +1591,333 @@ class _LinkPicker extends StatelessWidget {
     if (v is double) a = v;
     if (a == null) return '';
     return 'Amount: ${a.toStringAsFixed(2)}';
+  }
+}
+
+/// Widget showing the reply preview bar above the composer
+class _ReplyPreviewBar extends StatelessWidget {
+  final String replyingToName;
+  final String replyingToText;
+  final VoidCallback onCancel;
+
+  const _ReplyPreviewBar({
+    required this.replyingToName,
+    required this.replyingToText,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border(
+          left: BorderSide(
+            color: Theme.of(context).colorScheme.primary,
+            width: 4,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Replying to $replyingToName',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                Text(
+                  replyingToText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: onCancel,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Sticker picker widget
+class _StickerPicker extends StatelessWidget {
+  final void Function(String sticker) onStickerSelected;
+
+  const _StickerPicker({required this.onStickerSelected});
+
+  // Sticker categories with emojis
+  static const Map<String, List<String>> stickerCategories = {
+    'Smileys': [
+      '😀',
+      '😃',
+      '😄',
+      '😁',
+      '😅',
+      '😂',
+      '🤣',
+      '😊',
+      '😇',
+      '🙂',
+      '😉',
+      '😌',
+      '😍',
+      '🥰',
+      '😘',
+      '😗',
+      '😙',
+      '😚',
+      '😋',
+      '😛',
+      '😜',
+      '🤪',
+      '😝',
+      '🤗',
+      '🤭',
+      '🤫',
+      '🤔',
+      '🤐',
+      '🤨',
+      '😐',
+      '😑',
+      '😶',
+      '😏',
+      '😒',
+      '🙄',
+      '😬',
+      '😮‍💨',
+      '🤥',
+      '😌',
+      '😔',
+    ],
+    'Gestures': [
+      '👍',
+      '👎',
+      '👊',
+      '✊',
+      '🤛',
+      '🤜',
+      '🤞',
+      '✌️',
+      '🤟',
+      '🤘',
+      '👌',
+      '🤌',
+      '🤏',
+      '👈',
+      '👉',
+      '👆',
+      '👇',
+      '☝️',
+      '✋',
+      '🤚',
+      '🖐️',
+      '🖖',
+      '👋',
+      '🤙',
+      '💪',
+      '🙏',
+      '🤝',
+      '👏',
+      '🙌',
+      '👐',
+    ],
+    'Hearts': [
+      '❤️',
+      '🧡',
+      '💛',
+      '💚',
+      '💙',
+      '💜',
+      '🖤',
+      '🤍',
+      '🤎',
+      '💔',
+      '❣️',
+      '💕',
+      '💞',
+      '💓',
+      '💗',
+      '💖',
+      '💘',
+      '💝',
+      '💟',
+      '♥️',
+    ],
+    'Objects': [
+      '🎉',
+      '🎊',
+      '🎁',
+      '🎈',
+      '🏆',
+      '🥇',
+      '🥈',
+      '🥉',
+      '⭐',
+      '🌟',
+      '✨',
+      '💫',
+      '🔥',
+      '💯',
+      '💰',
+      '💵',
+      '💸',
+      '🏠',
+      '🚗',
+      '✈️',
+      '📱',
+      '💻',
+      '🎮',
+      '📚',
+      '✏️',
+      '📝',
+      '🔔',
+      '📣',
+      '🎵',
+      '🎶',
+    ],
+    'Food': [
+      '🍕',
+      '🍔',
+      '🍟',
+      '🌭',
+      '🍿',
+      '🧂',
+      '🥓',
+      '🥚',
+      '🍳',
+      '🥐',
+      '🍞',
+      '🥖',
+      '🥨',
+      '🧀',
+      '🥗',
+      '🥙',
+      '🥪',
+      '🌮',
+      '🌯',
+      '🫔',
+      '🍝',
+      '🍜',
+      '🍲',
+      '🍛',
+      '🍣',
+      '🍱',
+      '🥟',
+      '🍤',
+      '🍙',
+      '🍚',
+    ],
+    'Animals': [
+      '🐶',
+      '🐱',
+      '🐭',
+      '🐹',
+      '🐰',
+      '🦊',
+      '🐻',
+      '🐼',
+      '🐨',
+      '🐯',
+      '🦁',
+      '🐮',
+      '🐷',
+      '🐸',
+      '🐵',
+      '🙈',
+      '🙉',
+      '🙊',
+      '🐔',
+      '🐧',
+      '🐦',
+      '🐤',
+      '🦆',
+      '🦅',
+      '🦉',
+      '🦇',
+      '🐺',
+      '🐗',
+      '🐴',
+      '🦄',
+    ],
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: stickerCategories.length,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 8),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[400],
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Stickers',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          TabBar(
+            isScrollable: true,
+            tabs: stickerCategories.keys.map((cat) => Tab(text: cat)).toList(),
+          ),
+          SizedBox(
+            height: 250,
+            child: TabBarView(
+              children: stickerCategories.entries.map((entry) {
+                return GridView.builder(
+                  padding: const EdgeInsets.all(12),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 8,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                  ),
+                  itemCount: entry.value.length,
+                  itemBuilder: (context, index) {
+                    final sticker = entry.value[index];
+                    return InkWell(
+                      onTap: () => onStickerSelected(sticker),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Center(
+                        child: Text(
+                          sticker,
+                          style: const TextStyle(fontSize: 28),
+                        ),
+                      ),
+                    );
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

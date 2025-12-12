@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/rooms_provider.dart';
+import '../../widgets/banner_ad_widget.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/room_card.dart';
 import '../../services/firestore_service.dart';
@@ -217,6 +218,8 @@ class DashboardScreen extends StatelessWidget {
                       : _buildRoomsList(context, roomsProvider),
                 ),
               ),
+              // Banner Ad at the bottom
+              const MyBannerAd(),
             ],
           ),
         ),

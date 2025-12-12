@@ -1,4 +1,5 @@
 // lib/providers/auth_provider.dart
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,10 +17,28 @@ class AuthProvider extends ChangeNotifier {
   bool isLoading = true;
   String? error;
 
+  StreamSubscription<User?>? _authSubscription;
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
   AuthProvider() {
     // listen to auth state changes
-    _auth.authStateChanges().listen(
+    _authSubscription = _auth.authStateChanges().listen(
       (u) async {
+        if (_disposed) return;
         firebaseUser = u;
         if (u != null) {
           await _loadOrCreateUserProfile(u);
@@ -30,6 +49,7 @@ class AuthProvider extends ChangeNotifier {
         notifyListeners();
       },
       onError: (e) {
+        if (_disposed) return;
         error = e.toString();
         isLoading = false;
         notifyListeners();
