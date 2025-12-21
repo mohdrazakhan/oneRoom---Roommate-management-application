@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/rooms_provider.dart';
 import '../../services/firestore_service.dart';
+import '../../widgets/safe_web_image.dart';
 
 class AllMembersScreen extends StatefulWidget {
   const AllMembersScreen({super.key});
@@ -250,18 +251,31 @@ class _AllMembersScreenState extends State<AllMembersScreen> {
                 leading: CircleAvatar(
                   radius: 24,
                   backgroundColor: Theme.of(context).colorScheme.primary,
-                  backgroundImage: profile?['photoURL'] != null
-                      ? NetworkImage(profile!['photoURL'])
-                      : null,
-                  child: profile?['photoURL'] == null
-                      ? Text(
+                  child: profile?['photoURL'] != null
+                      ? ClipOval(
+                          child: SafeWebImage(
+                            profile!['photoURL'],
+                            width: 48,
+                            height: 48,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Text(
+                                _getInitials(profile['displayName'] ?? 'U'),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              );
+                            },
+                          ),
+                        )
+                      : Text(
                           _getInitials(profile?['displayName'] ?? 'U'),
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,
                           ),
-                        )
-                      : null,
+                        ),
                 ),
                 title: Text(
                   profile?['displayName'] ?? 'Unknown User',

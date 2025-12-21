@@ -9,6 +9,9 @@ import '../utils/formatters.dart';
 import '../providers/auth_provider.dart';
 import '../screens/notifications/room_notifications_screen.dart';
 import '../Models/payment.dart';
+import '../screens/expenses/balances_screen.dart';
+import '../screens/home/expense_analytics_screen.dart';
+import 'safe_web_image.dart';
 
 class RoomCard extends StatelessWidget {
   final Room room;
@@ -29,9 +32,7 @@ class RoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final membersCount = room.members.length;
-    final dateText = room.createdAt != null
-        ? Formatters.formatDateTime(room.createdAt!)
-        : '—';
+    final dateText = Formatters.formatDateTime(room.createdAt);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -77,34 +78,63 @@ class RoomCard extends StatelessWidget {
                     Row(
                       children: [
                         // Modern gradient avatar
-                        Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Theme.of(context).colorScheme.primary,
-                                Theme.of(context).colorScheme.secondary,
+                        GestureDetector(
+                          onTap: onMorePressed,
+                          child: Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withValues(alpha: 0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                ),
                               ],
                             ),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.primary.withValues(alpha: 0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Center(
-                            child: Text(
-                              _initials(room.name),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 24,
-                                color: Colors.white,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  // Fallback Gradient & Initials (always visible as base or if error)
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Theme.of(context).colorScheme.primary,
+                                          Theme.of(
+                                            context,
+                                          ).colorScheme.secondary,
+                                        ],
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        _initials(room.name),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 24,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  // Image on top if available
+                                  if (room.photoUrl != null &&
+                                      room.photoUrl!.isNotEmpty)
+                                    SafeWebImage(
+                                      room.photoUrl!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        // On error, just show the underlying gradient/initials
+                                        return const SizedBox.shrink();
+                                      },
+                                    ),
+                                ],
                               ),
                             ),
                           ),
@@ -150,8 +180,17 @@ class RoomCard extends StatelessWidget {
                         ),
                         _buildInfoChip(
                           context,
-                          Icons.account_balance_wallet_rounded,
-                          'Expenses',
+                          Icons.insights_rounded,
+                          'Analytics',
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    ExpenseAnalyticsScreen(room: room),
+                              ),
+                            );
+                          },
                         ),
                         // My balance chip (you owe / you get) for this room
                         _MyBalanceChip(roomId: room.id),
@@ -162,7 +201,7 @@ class RoomCard extends StatelessWidget {
                     LayoutBuilder(
                       builder: (context, constraints) {
                         // Adapt to screen width
-                        final isSmallScreen = constraints.maxWidth < 320;
+                        final isSmallScreen = constraints.maxWidth < 350;
                         final spacing = isSmallScreen ? 6.0 : 8.0;
 
                         return Row(
@@ -170,8 +209,8 @@ class RoomCard extends StatelessWidget {
                             Expanded(
                               child: _buildActionButton(
                                 context,
-                                icon: Icons.receipt_long_rounded,
-                                label: isSmallScreen ? 'Exp' : 'Expenses',
+                                icon: Icons.account_balance_wallet_rounded,
+                                label: 'Expenses',
                                 onPressed: onTap,
                                 isPrimary: true,
                                 compact: isSmallScreen,
@@ -221,27 +260,36 @@ class RoomCard extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoChip(BuildContext context, IconData icon, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.primary,
+  Widget _buildInfoChip(
+    BuildContext context,
+    IconData icon,
+    String label, {
+    VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.primary,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -280,17 +328,19 @@ class RoomCard extends StatelessWidget {
               ),
               SizedBox(width: compact ? 4 : 6),
               Flexible(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: compact ? 12 : 13,
-                    color: isPrimary
-                        ? Colors.white
-                        : Theme.of(context).colorScheme.primary,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: compact ? 11 : 13,
+                      color: isPrimary
+                          ? Colors.white
+                          : Theme.of(context).colorScheme.primary,
+                    ),
+                    maxLines: 1,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
                 ),
               ),
             ],
@@ -362,7 +412,7 @@ class _MyBalanceChip extends StatelessWidget {
               if (expenses.isEmpty) return const SizedBox.shrink();
               final balances = BalanceCalculator.calculateBalances(expenses);
               final net = balances[uid] ?? 0.0;
-              return _buildBalanceChip(context, net);
+              return _buildBalanceChip(context, net, roomId);
             }
 
             final paymentMaps = paymentSnapshot.data!;
@@ -391,14 +441,14 @@ class _MyBalanceChip extends StatelessWidget {
               payments,
             );
             final net = balances[uid] ?? 0.0;
-            return _buildBalanceChip(context, net);
+            return _buildBalanceChip(context, net, roomId);
           },
         );
       },
     );
   }
 
-  Widget _buildBalanceChip(BuildContext context, double net) {
+  Widget _buildBalanceChip(BuildContext context, double net, String roomId) {
     String label;
     Color color;
     IconData icon;
@@ -417,26 +467,37 @@ class _MyBalanceChip extends StatelessWidget {
       icon = Icons.check_circle_rounded;
     }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: color),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: color,
-            ),
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BalancesScreen(roomId: roomId),
           ),
-        ],
+        );
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

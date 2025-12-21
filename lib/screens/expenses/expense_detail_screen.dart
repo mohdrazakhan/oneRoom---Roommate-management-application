@@ -4,7 +4,8 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../Models/expense.dart';
 import '../../services/firestore_service.dart';
-import 'enhanced_modern_expense_screen.dart';
+import '../../widgets/safe_web_image.dart';
+import 'add_expense_sheet.dart';
 
 class ExpenseDetailScreen extends StatelessWidget {
   final String roomId;
@@ -60,14 +61,12 @@ class ExpenseDetailScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => EnhancedModernExpenseScreen(
-                    roomId: roomId,
-                    expense: currentExpense,
-                  ),
-                ),
+              final result = await showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (context) =>
+                    AddExpenseSheet(roomId: roomId, expense: currentExpense),
               );
               if (result == true && context.mounted) {
                 Navigator.pop(context); // Go back to refresh the list
@@ -87,7 +86,7 @@ class ExpenseDetailScreen extends StatelessWidget {
           if (currentExpense.receiptUrl != null) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.network(
+              child: SafeWebImage(
                 currentExpense.receiptUrl!,
                 height: 250,
                 width: double.infinity,

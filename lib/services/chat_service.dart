@@ -32,6 +32,15 @@ class ChatService {
         );
   }
 
+  Stream<ChatMessage> streamSingleMessage(String roomId, String messageId) {
+    return _roomChatRef(roomId)
+        .doc(messageId)
+        .snapshots()
+        .map(
+          (d) => ChatMessage.fromDoc(d.id, d.data() as Map<String, dynamic>),
+        );
+  }
+
   Future<void> sendText({
     required String roomId,
     required String text,
@@ -149,6 +158,30 @@ class ChatService {
       'senderId': uid,
       'type': 'sticker',
       'stickerCode': stickerCode,
+      'createdAt': FieldValue.serverTimestamp(),
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToText != null) 'replyToText': replyToText,
+      if (replyToSenderId != null) 'replyToSenderId': replyToSenderId,
+      if (replyToSenderName != null) 'replyToSenderName': replyToSenderName,
+    });
+  }
+
+  /// Send a GIF URL (from Giphy)
+  Future<void> sendGif({
+    required String roomId,
+    required String gifUrl,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderId,
+    String? replyToSenderName,
+  }) async {
+    final uid = _auth.currentUser?.uid ?? '';
+    await _roomChatRef(roomId).add({
+      'roomId': roomId,
+      'senderId': uid,
+      'type': 'image', // Treat GIF as image
+      'mediaUrl': gifUrl,
+      'mediaMime': 'image/gif',
       'createdAt': FieldValue.serverTimestamp(),
       if (replyToId != null) 'replyToId': replyToId,
       if (replyToText != null) 'replyToText': replyToText,
@@ -288,11 +321,46 @@ class ChatService {
     if (data['senderId'] != uid) {
       throw Exception('You can only delete your own messages');
     }
-    // Soft delete instead of hard delete to avoid rules conflicts and keep audit trail
-    await msgRef.update({
-      'deleted': true,
-      'deletedAt': FieldValue.serverTimestamp(),
-      'deletedBy': uid,
+    // Hard delete as requested
+    // 1. Delete associated media if legacy
+    final mediaUrl = data['mediaUrl'] as String?;
+    if (mediaUrl != null && mediaUrl.isNotEmpty) {
+      try {
+        await FirebaseStorage.instance.refFromURL(mediaUrl).delete();
+      } catch (e) {
+        // Ignore storage delete errors (file might be missing)
+        print('Storage delete error: $e');
+      }
+    }
+
+    // 2. Delete the document
+    await msgRef.delete();
+  }
+
+  /// Hide a message for the current user only
+  Future<void> deleteMessageForMe({
+    required String roomId,
+    required String messageId,
+  }) async {
+    final uid = _auth.currentUser?.uid ?? '';
+    await _roomChatRef(roomId).doc(messageId).update({
+      'hiddenBy': FieldValue.arrayUnion([uid]),
     });
+  }
+
+  Future<void> markMessageAsRead(String roomId, String messageId) async {
+    final uid = _auth.currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+
+    try {
+      // Use arrayUnion to add uid to readBy list
+      await _roomChatRef(roomId).doc(messageId).update({
+        'readBy': FieldValue.arrayUnion([uid]),
+      });
+    } catch (e) {
+      // Silently fail if permission denied or other errors
+      // This is not critical - just a read receipt feature
+      print('markMessageAsRead failed: $e');
+    }
   }
 }

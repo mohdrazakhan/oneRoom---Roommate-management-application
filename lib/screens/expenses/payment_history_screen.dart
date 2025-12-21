@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/firestore_service.dart';
 
 class PaymentHistoryScreen extends StatelessWidget {
@@ -334,7 +335,9 @@ class PaymentHistoryScreen extends StatelessWidget {
 
     if (confirmed == true) {
       try {
-        await firestoreService.deletePayment(roomId, paymentId);
+        final currentUserId =
+            FirebaseAuth.instance.currentUser?.uid ?? 'unknown';
+        await firestoreService.deletePayment(roomId, paymentId, currentUserId);
 
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

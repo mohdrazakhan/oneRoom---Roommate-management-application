@@ -3,10 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../../providers/rooms_provider.dart';
 import '../../widgets/banner_ad_widget.dart';
+import '../../widgets/safe_web_image.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/room_card.dart';
+import '../../services/subscription_service.dart';
 import '../../services/firestore_service.dart';
-import '../../constants.dart';
+
 import '../expenses/expenses_list_screen.dart';
 import '../tasks/tasks_home_screen.dart';
 import '../tasks/my_tasks_dashboard.dart';
@@ -16,6 +18,7 @@ import 'join_room_screen.dart';
 import 'enhanced_room_settings_screen.dart';
 import '../chat/chat_screen.dart';
 import 'all_members_screen.dart';
+import '../../widgets/premium_avatar_wrapper.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -24,6 +27,7 @@ class DashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final roomsProvider = Provider.of<RoomsProvider>(context);
     final authProvider = Provider.of<AuthProvider>(context);
+    final isPremium = Provider.of<SubscriptionService>(context).isPremium;
     final user = authProvider.firebaseUser;
     final profile = authProvider.profile;
 
@@ -87,11 +91,9 @@ class DashboardScreen extends StatelessWidget {
                               try {
                                 await authProvider.signOut();
                                 if (!context.mounted) return;
-                                // Navigate back to login
-                                Navigator.of(context).pushNamedAndRemoveUntil(
-                                  AppRoutes.login,
-                                  (route) => false,
-                                );
+                                Navigator.of(
+                                  context,
+                                ).popUntil((route) => route.isFirst);
                               } catch (e) {
                                 if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -105,94 +107,128 @@ class DashboardScreen extends StatelessWidget {
                                   builder: (_) => const ProfileScreen(),
                                 ),
                               );
+                            } else if (value == 'premium') {
+                              Navigator.pushNamed(context, '/subscription');
                             }
                           },
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(
-                              value: 'profile',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.person_rounded),
-                                  SizedBox(width: 12),
-                                  Text('Profile'),
-                                ],
+                          itemBuilder: (context) {
+                            final isPremium = Provider.of<SubscriptionService>(
+                              context,
+                              listen: false,
+                            ).isPremium;
+                            return [
+                              const PopupMenuItem(
+                                value: 'profile',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.person_rounded),
+                                    SizedBox(width: 12),
+                                    Text('Profile'),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'logout',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.logout_rounded, color: Colors.red),
-                                  SizedBox(width: 12),
-                                  Text(
-                                    'Sign Out',
-                                    style: TextStyle(color: Colors.red),
+                              if (!isPremium)
+                                const PopupMenuItem(
+                                  value: 'premium',
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.workspace_premium,
+                                        color: Colors.orange,
+                                      ),
+                                      SizedBox(width: 12),
+                                      Text(
+                                        'Go Premium',
+                                        style: TextStyle(
+                                          color: Colors.orange,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              const PopupMenuItem(
+                                value: 'logout',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.logout_rounded,
+                                      color: Colors.red,
+                                    ),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      'Sign Out',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ];
+                          },
+                          child: PremiumAvatarWrapper(
+                            isPremium: isPremium,
+                            size: 28,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Theme.of(context).colorScheme.primary
+                                        .withValues(alpha: 0.3),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
-                          child: Container(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withValues(alpha: 0.3),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Builder(
-                              builder: (context) {
-                                final fallbackInitials = _getInitials(
-                                  profile?.displayName ??
-                                      user?.displayName ??
-                                      'R',
-                                );
+                              child: Builder(
+                                builder: (context) {
+                                  final fallbackInitials = _getInitials(
+                                    profile?.displayName ??
+                                        user?.displayName ??
+                                        'R',
+                                  );
 
-                                return CircleAvatar(
-                                  radius: 28,
-                                  backgroundColor: Theme.of(
-                                    context,
-                                  ).colorScheme.primary,
-                                  child: user?.photoURL != null
-                                      ? ClipOval(
-                                          child: Image.network(
-                                            user!.photoURL!,
-                                            fit: BoxFit.cover,
-                                            width: 56,
-                                            height: 56,
-                                            errorBuilder:
-                                                (context, error, stackTrace) {
-                                                  return Center(
-                                                    child: Text(
-                                                      fallbackInitials,
-                                                      style: const TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 20,
-                                                        fontWeight:
-                                                            FontWeight.bold,
+                                  return CircleAvatar(
+                                    radius: 28,
+                                    backgroundColor: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                    child: user?.photoURL != null
+                                        ? ClipOval(
+                                            child: SafeWebImage(
+                                              user!.photoURL!,
+                                              fit: BoxFit.cover,
+                                              width: 56,
+                                              height: 56,
+                                              errorBuilder:
+                                                  (context, error, stackTrace) {
+                                                    return Center(
+                                                      child: Text(
+                                                        fallbackInitials,
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 20,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
                                                       ),
-                                                    ),
-                                                  );
-                                                },
-                                          ),
-                                        )
-                                      : Center(
-                                          child: Text(
-                                            fallbackInitials,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.bold,
+                                                    );
+                                                  },
+                                            ),
+                                          )
+                                        : Center(
+                                            child: Text(
+                                              fallbackInitials,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
                             ),
                           ),
                         ),
@@ -213,17 +249,49 @@ class DashboardScreen extends StatelessWidget {
                   },
                   child: roomsProvider.isLoading
                       ? const Center(child: CircularProgressIndicator())
+                      : roomsProvider.error != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.error_outline_rounded,
+                                  size: 48,
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Failed to load rooms',
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  roomsProvider.error!,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                                const SizedBox(height: 24),
+                                FilledButton.icon(
+                                  onPressed: () => roomsProvider.refresh(),
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  label: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
                       : roomsProvider.rooms.isEmpty
                       ? _buildEmptyState(context)
                       : _buildRoomsList(context, roomsProvider),
                 ),
               ),
-              // Banner Ad at the bottom
-              const MyBannerAd(),
             ],
           ),
         ),
       ),
+      bottomNavigationBar: const SafeArea(child: MyBannerAd()),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           _showRoomOptionsMenu(context);
@@ -673,50 +741,73 @@ class DashboardScreen extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: ListView.builder(
+          child: ReorderableListView.builder(
             padding: const EdgeInsets.only(bottom: 180),
             itemCount: roomsProvider.rooms.length,
+            onReorder: (oldIndex, newIndex) {
+              roomsProvider.reorderRooms(oldIndex, newIndex);
+            },
+            proxyDecorator: (width, index, animation) {
+              return AnimatedBuilder(
+                animation: animation,
+                builder: (BuildContext context, Widget? child) {
+                  return Material(
+                    elevation: 8.0,
+                    borderRadius: BorderRadius.circular(16),
+                    color: Colors.transparent,
+                    child: child,
+                  );
+                },
+                child: RoomCard(room: roomsProvider.rooms[index]),
+              );
+            },
             itemBuilder: (context, i) {
               final room = roomsProvider.rooms[i];
-              return RoomCard(
-                room: room,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ExpensesListScreen(
-                        roomId: room.id,
-                        roomName: room.name,
+              return Container(
+                key: ValueKey(room.id),
+                margin: const EdgeInsets.only(bottom: 12),
+                child: RoomCard(
+                  room: room,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ExpensesListScreen(
+                          roomId: room.id,
+                          roomName: room.name,
+                        ),
                       ),
-                    ),
-                  );
-                },
-                onTasksTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          TasksHomeScreen(roomId: room.id, roomName: room.name),
-                    ),
-                  );
-                },
-                onChatTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          ChatScreen(roomId: room.id, roomName: room.name),
-                    ),
-                  );
-                },
-                onMorePressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => EnhancedRoomSettingsScreen(room: room),
-                    ),
-                  );
-                },
+                    );
+                  },
+                  onTasksTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TasksHomeScreen(
+                          roomId: room.id,
+                          roomName: room.name,
+                        ),
+                      ),
+                    );
+                  },
+                  onChatTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ChatScreen(roomId: room.id, roomName: room.name),
+                      ),
+                    );
+                  },
+                  onMorePressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => EnhancedRoomSettingsScreen(room: room),
+                      ),
+                    );
+                  },
+                ),
               );
             },
           ),

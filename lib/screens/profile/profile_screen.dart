@@ -5,12 +5,15 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/subscription_service.dart';
 import '../../Models/user_profile.dart';
 import '../../constants.dart';
 import 'edit_profile_dialogs.dart';
 import 'change_password_dialog.dart';
 import 'about_screen.dart';
 import 'support_screen.dart';
+import '../../widgets/safe_web_image.dart';
+import '../../widgets/premium_avatar_wrapper.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -165,6 +168,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 _buildProfileSection(context, profile),
                 const SizedBox(height: 16),
+                _buildSubscriptionSection(context),
+                const SizedBox(height: 16),
                 _buildPersonalInfoSection(context, profile),
                 const SizedBox(height: 16),
                 _buildNotificationSection(context, profile),
@@ -242,58 +247,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildProfileImage(UserProfile profile) {
-    return Stack(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 10,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: CircleAvatar(
-            radius: 50,
-            backgroundColor: Colors.grey[200],
-            child: profile.photoUrl != null
-                ? ClipOval(
-                    child: Image.network(
-                      profile.photoUrl!,
-                      fit: BoxFit.cover,
-                      width: 100,
-                      height: 100,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Center(
-                          child: Text(
-                            _getInitials(
-                              profile.displayName ?? profile.email ?? '?',
-                            ),
-                            style: const TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.deepPurple,
-                            ),
-                          ),
-                        );
-                      },
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Center(
-                          child: CircularProgressIndicator(
-                            value: loadingProgress.expectedTotalBytes != null
-                                ? loadingProgress.cumulativeBytesLoaded /
-                                      loadingProgress.expectedTotalBytes!
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
-                  )
-                : Center(
+    final avatarContent = CircleAvatar(
+      radius: 50,
+      backgroundColor: Colors.grey[200],
+      child: profile.photoUrl != null
+          ? ClipOval(
+              child: SafeWebImage(
+                profile.photoUrl!,
+                fit: BoxFit.cover,
+                width: 100,
+                height: 100,
+                errorBuilder: (context, error, stackTrace) {
+                  return Center(
                     child: Text(
                       _getInitials(profile.displayName ?? profile.email ?? '?'),
                       style: const TextStyle(
@@ -302,9 +267,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         color: Colors.deepPurple,
                       ),
                     ),
-                  ),
+                  );
+                },
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Center(
+                    child: CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                                loadingProgress.expectedTotalBytes!
+                          : null,
+                    ),
+                  );
+                },
+              ),
+            )
+          : Center(
+              child: Text(
+                _getInitials(profile.displayName ?? profile.email ?? '?'),
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.deepPurple,
+                ),
+              ),
+            ),
+    );
+
+    return Stack(
+      children: [
+        if (profile.isPremium)
+          PremiumAvatarWrapper(isPremium: true, size: 50, child: avatarContent)
+        else
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 4),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: avatarContent,
           ),
-        ),
         if (_isUploading)
           Positioned.fill(
             child: Container(
@@ -349,6 +357,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
     }
     return name[0].toUpperCase();
+  }
+
+  Widget _buildSubscriptionSection(BuildContext context) {
+    final isPremium = Provider.of<SubscriptionService>(context).isPremium;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: ListTile(
+        onTap: () {
+          Navigator.pushNamed(context, '/subscription');
+        },
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isPremium
+                ? Colors.amber.withValues(alpha: 0.1)
+                : Colors.orange.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            isPremium ? Icons.workspace_premium_rounded : Icons.star_rounded,
+            color: isPremium ? Colors.amber : Colors.orange,
+            size: 24,
+          ),
+        ),
+        title: Text(
+          isPremium ? 'Premium Member' : 'Upgrade to Premium',
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+        subtitle: Text(
+          isPremium
+              ? 'Enjoy all features'
+              : 'Unlock unlimited rooms & remove ads',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        ),
+        trailing: Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
+      ),
+    );
   }
 
   Widget _buildProfileSection(BuildContext context, UserProfile profile) {

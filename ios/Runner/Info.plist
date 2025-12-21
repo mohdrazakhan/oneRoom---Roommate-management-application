@@ -53,7 +53,7 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.638482289370-jd1q1qgf5r3i8k1b3j5q5q5q5q5q5q5q</string>
+				<string>com.googleusercontent.apps.30053537626-t839di474910ajlr7grnsccmbgevnplu</string>
 			</array>
 		</dict>
 	</array>
@@ -64,5 +64,7 @@
 	<string>This app needs access to your camera to scan QR codes and take photos for the app.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app may need access to your microphone for future video chat features.</string>
+	<key>GADApplicationIdentifier</key>
+	<string>ca-app-pub-3940256099942544~1458002511</string>
 </dict>
 </plist>

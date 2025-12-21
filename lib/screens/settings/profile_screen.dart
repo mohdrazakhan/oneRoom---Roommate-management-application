@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 
 import '../../providers/auth_provider.dart';
+import '../../widgets/safe_web_image.dart';
 import '../../widgets/primary_button.dart';
 import '../../utils/validators.dart';
 import '../../constants.dart';
@@ -99,21 +100,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onTap: _pickImage,
                       child: CircleAvatar(
                         radius: 48,
-                        backgroundImage: _pickedImage != null
+                        backgroundColor: Colors.grey[200],
+                        foregroundImage: _pickedImage != null
                             ? FileImage(_pickedImage!)
-                            : (profile.photoUrl != null &&
-                                  profile.photoUrl!.isNotEmpty)
-                            ? NetworkImage(profile.photoUrl!) as ImageProvider
                             : null,
-                        child:
-                            (_pickedImage == null &&
-                                (profile.photoUrl == null ||
-                                    profile.photoUrl!.isEmpty))
-                            ? const Icon(
-                                Icons.person,
-                                size: 48,
-                                color: Colors.white,
-                              )
+                        child: _pickedImage == null
+                            ? (profile.photoUrl != null &&
+                                      profile.photoUrl!.isNotEmpty
+                                  ? ClipOval(
+                                      child: SafeWebImage(
+                                        profile.photoUrl!,
+                                        width: 96,
+                                        height: 96,
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                              return const Icon(
+                                                Icons.person,
+                                                size: 48,
+                                                color: Colors.white,
+                                              );
+                                            },
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.person,
+                                      size: 48,
+                                      color: Colors.white,
+                                    ))
                             : null,
                       ),
                     ),

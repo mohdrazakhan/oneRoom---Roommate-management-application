@@ -4,8 +4,17 @@ import '../../services/firestore_service.dart';
 
 class RecordPaymentScreen extends StatefulWidget {
   final String roomId;
+  final String? initialPayerId;
+  final String? initialReceiverId;
+  final double? initialAmount;
 
-  const RecordPaymentScreen({super.key, required this.roomId});
+  const RecordPaymentScreen({
+    super.key,
+    required this.roomId,
+    this.initialPayerId,
+    this.initialReceiverId,
+    this.initialAmount,
+  });
 
   @override
   State<RecordPaymentScreen> createState() => _RecordPaymentScreenState();
@@ -27,6 +36,11 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
   @override
   void initState() {
     super.initState();
+    _payerId = widget.initialPayerId;
+    _receiverId = widget.initialReceiverId;
+    if (widget.initialAmount != null) {
+      _amountController.text = widget.initialAmount!.toStringAsFixed(2);
+    }
     _loadRoomData();
   }
 
@@ -61,6 +75,14 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
   }
 
   String _getMemberDisplayName(String uid) {
+    // Check if it's a guest from roomData
+    if (_roomData != null && _roomData!['guests'] != null) {
+      final guest = _roomData!['guests'][uid];
+      if (guest != null && guest['name'] != null) {
+        return '${guest['name']} (Guest)';
+      }
+    }
+
     final profile = _memberProfiles[uid];
     if (profile == null) return 'Member';
 
@@ -158,6 +180,9 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
     }
 
     final members = List<String>.from(_roomData!['members'] ?? []);
+    final guestsMap = _roomData!['guests'] as Map<String, dynamic>? ?? {};
+    final guestIds = guestsMap.keys.toList();
+    final allParticipants = [...members, ...guestIds];
 
     if (members.length < 2) {
       return Scaffold(
@@ -228,7 +253,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                   ),
                   hint: const Text('Select payer'),
                   isExpanded: true,
-                  items: members.map((uid) {
+                  items: allParticipants.map((uid) {
                     return DropdownMenuItem(
                       value: uid,
                       child: Text(_getMemberDisplayName(uid)),
@@ -283,7 +308,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                   ),
                   hint: const Text('Select receiver'),
                   isExpanded: true,
-                  items: members.map((uid) {
+                  items: allParticipants.map((uid) {
                     return DropdownMenuItem(
                       value: uid,
                       child: Text(_getMemberDisplayName(uid)),

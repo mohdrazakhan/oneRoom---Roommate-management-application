@@ -1,7 +1,8 @@
-// ignore_for_file: avoid_print
 // lib/screens/tasks/category_tasks_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../Models/task_category.dart';
 import '../../Models/task.dart';
 import '../../providers/tasks_provider.dart';
@@ -41,17 +42,14 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
 
     try {
       final profiles = await FirestoreService().getUsersProfiles(room.members);
-      print('🔍 Category Screen: Loaded ${profiles.length} profiles');
-      profiles.forEach((uid, profile) {
-        print('👤 Profile $uid: ${profile.toString()}');
-      });
+      profiles.forEach((uid, profile) {});
       if (mounted) {
         setState(() {
           _memberProfiles = profiles;
         });
       }
     } catch (e) {
-      print('❌ Error loading profiles: $e');
+      debugPrint('❌ Error loading profiles: $e');
       if (mounted) {
         setState(() {});
       }
@@ -61,20 +59,11 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
   String _getMemberDisplayName(String uid) {
     final profile = _memberProfiles[uid];
     if (profile == null) {
-      print('⚠️ No profile found for $uid');
       return 'Member ${uid.substring(0, 4)}';
-    }
-
-    print('👤 Full profile data for $uid: $profile');
-
-    // Try different field names that might exist
+    } // Try different field names that might exist
     final displayName = profile['displayName'];
     final name = profile['name'];
     final email = profile['email'];
-
-    print('  - displayName: $displayName');
-    print('  - name: $name');
-    print('  - email: $email');
 
     // Return first available identifier
     if (displayName != null && displayName.toString().isNotEmpty) {
@@ -474,6 +463,12 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
                     'Current: ${_getMemberDisplayName(assignee)}',
                     widget.category.color,
                   ),
+                if (task.rotationType == RotationType.volunteer)
+                  _buildChip(
+                    Icons.pan_tool_outlined,
+                    'Volunteer Based',
+                    Colors.blue,
+                  ),
 
                 // Live status for today's instance
                 StreamBuilder<Map<String, dynamic>?>(
@@ -494,6 +489,24 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
                     }
                     final completed =
                         (instance['isCompleted'] as bool?) ?? false;
+                    final assignedTo = instance['assignedTo'];
+
+                    if (assignedTo == 'volunteer' && !completed) {
+                      return InkWell(
+                        onTap: () => _showAssignmentOptions(
+                          context,
+                          widget.roomId,
+                          instance['taskInstanceId'],
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        child: _buildChip(
+                          Icons.pan_tool_rounded,
+                          'Unclaimed: Tap to Assign',
+                          Colors.blue,
+                        ),
+                      );
+                    }
+
                     return _buildChip(
                       completed
                           ? Icons.check_circle_rounded
@@ -564,6 +577,128 @@ class _CategoryTasksScreenState extends State<CategoryTasksScreen> {
       builder: (_) =>
           CreateTaskSheet(roomId: widget.roomId, category: widget.category),
     );
+  }
+
+  void _showAssignmentOptions(
+    BuildContext context,
+    String roomId,
+    String taskInstanceId,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Text(
+                'Assign Task',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.back_hand_rounded, color: Colors.blue),
+              title: const Text('Volunteer (Assign to Me)'),
+              onTap: () async {
+                Navigator.pop(context);
+                final currentUser = FirebaseAuth.instance.currentUser;
+                if (currentUser != null) {
+                  await _assignTaskInstance(
+                    roomId,
+                    taskInstanceId,
+                    currentUser.uid,
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.group_rounded, color: Colors.orange),
+              title: const Text('Assign to Roommate'),
+              onTap: () {
+                Navigator.pop(context);
+                _showMemberSelectionDialog(context, roomId, taskInstanceId);
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMemberSelectionDialog(
+    BuildContext context,
+    String roomId,
+    String taskInstanceId,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Member'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _memberProfiles.length,
+            itemBuilder: (context, index) {
+              final uid = _memberProfiles.keys.elementAt(index);
+              final name = _getMemberDisplayName(uid);
+              return ListTile(
+                leading: CircleAvatar(child: Text(name[0].toUpperCase())),
+                title: Text(name),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _assignTaskInstance(roomId, taskInstanceId, uid);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _assignTaskInstance(
+    String roomId,
+    String taskInstanceId,
+    String userId,
+  ) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(roomId)
+          .collection('taskInstances')
+          .doc(taskInstanceId)
+          .update({'assignedTo': userId});
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Task assigned to ${_getMemberDisplayName(userId)}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error assigning task: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _confirmDelete(BuildContext context) {

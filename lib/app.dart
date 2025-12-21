@@ -1,11 +1,13 @@
 // lib/app.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import 'providers/auth_provider.dart';
 import 'providers/rooms_provider.dart';
 import 'services/navigation_service.dart';
 import 'services/notification_service.dart';
+import 'services/subscription_service.dart';
 
 // Screens (adjust imports if your paths differ)
 import 'screens/auth/login_screen.dart';
@@ -13,6 +15,7 @@ import 'screens/auth/signup_screen.dart';
 import 'screens/home/dashboard_screen.dart';
 import 'screens/home/create_room_screen.dart';
 import 'screens/expenses/expenses_list_screen.dart';
+import 'screens/subscription/subscription_screen.dart';
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -22,6 +25,7 @@ class MyApp extends StatelessWidget {
   static const String routeDashboard = '/dashboard';
   static const String routeCreateRoom = '/create-room';
   static const String routeRoomExpenses = '/room-expenses';
+  static const String routeSubscription = '/subscription';
 
   @override
   Widget build(BuildContext context) {
@@ -127,6 +131,7 @@ class MyApp extends StatelessWidget {
         routeSignup: (_) => const SignupScreen(),
         routeDashboard: (_) => const DashboardScreen(),
         routeCreateRoom: (_) => const CreateRoomScreen(),
+        routeSubscription: (_) => const SubscriptionScreen(),
       },
 
       // onGenerateRoute handles routes that need arguments (e.g., room id + name)
@@ -143,10 +148,42 @@ class MyApp extends StatelessWidget {
           }
         }
 
+        // Handle Firebase Auth deep links (verification)
+        if (settings.name != null && settings.name!.startsWith('/link')) {
+          debugPrint('🔗 Handling Firebase Auth link: ${settings.name}');
+          return MaterialPageRoute(
+            settings:
+                settings, // IMPORTANT: Pass settings so we can identify and pop this route later
+            builder: (context) => Scaffold(
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    const Text('Verifying...'),
+                    const SizedBox(height: 32),
+                    // Fail-safe close button
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
         // Unknown route
+        debugPrint('🚫 Page not found: ${settings.name}');
         return MaterialPageRoute(
-          builder: (_) =>
-              const Scaffold(body: Center(child: Text('Page not found'))),
+          builder: (_) => Scaffold(
+            body: Center(child: Text('Page not found: ${settings.name}')),
+          ),
         );
       },
     );
@@ -167,15 +204,51 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  String? _lastInitializedUid; // Track last initialized user
+  String? _initializedForUid;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final roomsProvider = Provider.of<RoomsProvider>(context, listen: false);
+    final uid = auth.firebaseUser?.uid;
+
+    // Start listening when user signs in
+    if (uid != null && _initializedForUid != uid) {
+      _initializedForUid = uid;
+
+      if (!roomsProvider.isListeningTo(uid)) {
+        debugPrint('🔐 AuthWrapper: Initializing listener for $uid');
+
+        // Use SchedulerBinding to ensure this runs after the current build phase
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          roomsProvider.startListening(uid);
+
+          // Initialize Subscription Service to check validity/expiry
+          Provider.of<SubscriptionService>(context, listen: false).init(uid);
+
+          // Setup notifications
+          NotificationService().saveTokenForCurrentUser();
+          NotificationService().initialize();
+          NavigationService().processPendingNotification();
+        });
+      }
+    } else if (uid == null && _initializedForUid != null) {
+      // User signed out
+      _initializedForUid = null;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        roomsProvider.stopListening();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
-    final roomsProvider = Provider.of<RoomsProvider>(context, listen: false);
 
     debugPrint(
-      '🔐 AuthWrapper build: isLoading=${auth.isLoading}, user=${auth.firebaseUser?.uid}, _lastInitializedUid=$_lastInitializedUid',
+      '🔐 AuthWrapper build: isLoading=${auth.isLoading}, user=${auth.firebaseUser?.uid}',
     );
 
     if (auth.isLoading) {
@@ -183,47 +256,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
 
     if (auth.firebaseUser == null) {
-      // Not signed in -> stop rooms listener and show login
-      if (_lastInitializedUid != null) {
-        debugPrint('🔐 User signed out, stopping rooms listener');
-        _lastInitializedUid = null;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          roomsProvider.stopListening();
-        });
-      }
       return const LoginScreen();
     }
 
-    // Signed in -> show dashboard
-    final uid = auth.firebaseUser!.uid;
-
-    // Start rooms listener if not already listening to this user
-    // Check both: uid changed OR rooms provider is not currently listening
-    final needsToStartListening =
-        _lastInitializedUid != uid ||
-        roomsProvider.rooms.isEmpty && !roomsProvider.isLoading;
-
-    debugPrint(
-      '🔐 needsToStartListening=$needsToStartListening (lastUid=$_lastInitializedUid, currentUid=$uid, rooms=${roomsProvider.rooms.length}, isLoading=${roomsProvider.isLoading})',
-    );
-
-    if (needsToStartListening) {
-      _lastInitializedUid = uid;
-
-      debugPrint('🔐 Starting rooms listener for uid: $uid');
-      // Start listening in post frame callback to avoid calling notifyListeners during build
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        roomsProvider.startListening(uid, forceRestart: true);
-
-        // Initialize notifications (non-blocking)
-        NotificationService().saveTokenForCurrentUser();
-        NotificationService().initialize();
-
-        // Process any pending notification navigation
-        NavigationService().processPendingNotification();
-      });
-    }
-
+    // User is signed in, show dashboard
     return const DashboardScreen();
   }
 }

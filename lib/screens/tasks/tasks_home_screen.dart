@@ -5,6 +5,8 @@ import '../../providers/tasks_provider.dart';
 import '../../Models/task_category.dart';
 import 'create_category_sheet.dart';
 import 'category_tasks_screen.dart';
+import '../../services/subscription_service.dart';
+import 'tasks_calendar_screen.dart';
 
 class TasksHomeScreen extends StatelessWidget {
   final String roomId;
@@ -38,6 +40,21 @@ class TasksHomeScreen extends StatelessWidget {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(
+              Icons.calendar_month_rounded,
+              color: Colors.black87,
+            ),
+            tooltip: 'Calendar View',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => TasksCalendarScreen(roomId: roomId),
+              ),
+            ),
+          ),
+        ],
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
@@ -221,7 +238,41 @@ class TasksHomeScreen extends StatelessWidget {
     );
   }
 
-  void _showCreateCategory(BuildContext context) {
+  Future<void> _showCreateCategory(BuildContext context) async {
+    // Check Premium Status
+    final subService = context.read<SubscriptionService>();
+    if (!subService.isPremium) {
+      final tasksProvider = context.read<TasksProvider>();
+      final count = await tasksProvider.getCategoryCount(roomId);
+      if (count >= 1) {
+        if (!context.mounted) return;
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Limit Reached'),
+            content: const Text(
+              'Free version allows only 1 task category.\n\nUpgrade to Premium for unlimited categories!',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pushNamed(context, '/subscription');
+                },
+                child: const Text('Go Premium'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    }
+
+    if (!context.mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

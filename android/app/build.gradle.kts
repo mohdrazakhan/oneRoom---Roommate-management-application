@@ -144,9 +144,6 @@ dependencies {
     // Multidex support (safe for older devices)
     implementation("androidx.multidex:multidex:2.0.1")
 
-    // Play Billing (for in-app purchases / remove ads)
-    implementation("com.android.billingclient:billing:7.0.0")
-
     // Google Mobile Ads (AdMob)
     implementation("com.google.android.gms:play-services-ads:22.2.0")
 

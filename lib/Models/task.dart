@@ -56,6 +56,9 @@ class Task {
   final bool isActive;
   final DateTime createdAt;
   final int currentRotationIndex; // For round-robin
+  final List<int>? weekDays; // For weekly: 1=Mon, 7=Sun
+  final int? monthDay; // For monthly: 1-31
+  final int? repeatInterval; // For custom: every X days
 
   Task({
     required this.id,
@@ -71,6 +74,9 @@ class Task {
     this.isActive = true,
     required this.createdAt,
     this.currentRotationIndex = 0,
+    this.weekDays,
+    this.monthDay,
+    this.repeatInterval,
   });
 
   factory Task.fromFirestore(DocumentSnapshot doc) {
@@ -104,6 +110,11 @@ class Task {
       isActive: data['isActive'] ?? true,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       currentRotationIndex: data['currentRotationIndex'] ?? 0,
+      weekDays: data['weekDays'] != null
+          ? List<int>.from(data['weekDays'])
+          : null,
+      monthDay: data['monthDay'],
+      repeatInterval: data['repeatInterval'],
     );
   }
 
@@ -122,6 +133,9 @@ class Task {
       'isActive': isActive,
       'createdAt': Timestamp.fromDate(createdAt),
       'currentRotationIndex': currentRotationIndex,
+      'weekDays': weekDays,
+      'monthDay': monthDay,
+      'repeatInterval': repeatInterval,
     };
   }
 
@@ -135,6 +149,9 @@ class Task {
     int? estimatedMinutes,
     bool? isActive,
     int? currentRotationIndex,
+    List<int>? weekDays,
+    int? monthDay,
+    int? repeatInterval,
   }) {
     return Task(
       id: id,
@@ -150,6 +167,9 @@ class Task {
       isActive: isActive ?? this.isActive,
       createdAt: createdAt,
       currentRotationIndex: currentRotationIndex ?? this.currentRotationIndex,
+      weekDays: weekDays ?? this.weekDays,
+      monthDay: monthDay ?? this.monthDay,
+      repeatInterval: repeatInterval ?? this.repeatInterval,
     );
   }
 }

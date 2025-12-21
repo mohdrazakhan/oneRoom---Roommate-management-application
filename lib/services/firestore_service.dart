@@ -1,8 +1,14 @@
 // ignore_for_file: avoid_print
 // lib/services/firestore_service.dart
 // Firestore helper: rooms, expenses, users
+import 'dart:async';
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart' hide Task;
 import 'package:flutter/foundation.dart';
 import '../Models/expense.dart';
 import '../Models/room_notification.dart';
@@ -12,12 +18,15 @@ import '../Models/task_category.dart';
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  // Simple in-memory cache for user profiles to speed up repeated lookups
+  final Map<String, Map<String, dynamic>> _profileCache = {};
+
   /// Top-level collection references
   CollectionReference get _rooms => _db.collection('rooms');
   CollectionReference get _users => _db.collection('users');
 
   /// ---------------------------
-  /// ROOMS
+  ///            ROOMS
   /// ---------------------------
 
   /// Stream rooms where the given uid is a member.
@@ -133,6 +142,48 @@ class FirestoreService {
   CollectionReference expensesRef(String roomId) =>
       _rooms.doc(roomId).collection('expenses');
 
+  /// Add a custom category to the room
+  Future<void> addCategoryToRoom(
+    String roomId,
+    String name,
+    String emoji,
+  ) async {
+    final categoryData = {'name': name, 'emoji': emoji};
+    await _rooms.doc(roomId).update({
+      'customCategories': FieldValue.arrayUnion([categoryData]),
+    });
+  }
+
+  /// Remove a custom category from the room
+  Future<void> removeCategoryFromRoom(
+    String roomId,
+    String name,
+    String emoji,
+  ) async {
+    final categoryData = {'name': name, 'emoji': emoji};
+    await _rooms.doc(roomId).update({
+      'customCategories': FieldValue.arrayRemove([categoryData]),
+    });
+  }
+
+  /// Add a guest to the room
+  Future<String> addGuestToRoom(String roomId, String guestName) async {
+    // We store guests in a map: guests.guestId = {name: ..., ...}
+    // Generate a simple guest ID
+    final guestId =
+        'guest_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1000)}';
+
+    final guestData = {
+      'name': guestName.trim(),
+      'createdAt': Timestamp.now(),
+      'isActive': true,
+    };
+
+    await _rooms.doc(roomId).update({'guests.$guestId': guestData});
+
+    return guestId;
+  }
+
   /// Resolve a user's display name by uid. Returns null if not found.
   Future<String?> getUserDisplayName(String uid) async {
     try {
@@ -226,6 +277,23 @@ class FirestoreService {
           }
         }
       }
+
+      // Add Audit Log
+      try {
+        await _rooms.doc(roomId).collection('auditLog').add({
+          'action': 'created',
+          'performedBy': currentUserId,
+          'timestamp': FieldValue.serverTimestamp(),
+          'expenseDescription': description,
+          'changes': {
+            'amount': amount.toStringAsFixed(2),
+            'paid by': paidBy,
+            'category': category,
+          },
+        });
+      } catch (_) {
+        // Ignore audit failure
+      }
     }
 
     return doc.id;
@@ -287,6 +355,27 @@ class FirestoreService {
               );
             }
           }
+        }
+
+        // Add Audit Log
+        try {
+          final changesForLog = <String, String>{};
+          if (amount != null) {
+            changesForLog['amount'] = amount.toStringAsFixed(2);
+          }
+          if (paidBy != null) changesForLog['paid by'] = paidBy;
+          if (category != null) changesForLog['category'] = category;
+          if (description != null) changesForLog['description'] = description;
+
+          await _rooms.doc(roomId).collection('auditLog').add({
+            'action': 'updated',
+            'performedBy': currentUserId,
+            'timestamp': FieldValue.serverTimestamp(),
+            'expenseDescription': description ?? 'Expense',
+            'changes': changesForLog,
+          });
+        } catch (_) {
+          // Ignore audit failure
         }
       }
     }
@@ -494,11 +583,25 @@ class FirestoreService {
 
   /// Upload receipt image to Firebase Storage
   Future<String> uploadReceipt(dynamic receiptFile, String roomId) async {
-    // This method would need Firebase Storage implementation
-    // For now, return empty string - implement with firebase_storage package
-    throw UnimplementedError(
-      'Receipt upload requires firebase_storage package',
-    );
+    try {
+      final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final Reference ref = FirebaseStorage.instance.ref().child(
+        'receipts/$roomId/$fileName',
+      );
+
+      if (receiptFile is File) {
+        await ref.putFile(receiptFile);
+      } else if (receiptFile is Uint8List) {
+        await ref.putData(receiptFile);
+      } else {
+        throw Exception('Unsupported file type');
+      }
+
+      return await ref.getDownloadURL();
+    } catch (e) {
+      print('Error uploading receipt: $e');
+      rethrow;
+    }
   }
 
   /// ---------------------------
@@ -507,10 +610,17 @@ class FirestoreService {
 
   /// Get user profile doc (one-time). Returns map including 'id' (uid) or null.
   Future<Map<String, dynamic>?> getUserProfile(String uid) async {
+    if (_profileCache.containsKey(uid)) {
+      return _profileCache[uid];
+    }
+
     final snap = await _users.doc(uid).get();
     if (!snap.exists) return null;
     final m = snap.data() as Map<String, dynamic>;
-    return {...m, 'id': snap.id};
+    final data = {...m, 'id': snap.id};
+
+    _profileCache[uid] = data; // Store in cache
+    return data;
   }
 
   /// Stream user profile changes (map with 'id')
@@ -525,6 +635,11 @@ class FirestoreService {
   /// Update (merge) user profile fields
   Future<void> updateUserProfile(String uid, Map<String, dynamic> data) async {
     await _users.doc(uid).set(data, SetOptions(merge: true));
+  }
+
+  /// Update just the room order for a user
+  Future<void> updateUserRoomOrder(String uid, List<String> order) async {
+    await _users.doc(uid).update({'roomOrder': order});
   }
 
   /// ---------------------------
@@ -609,9 +724,13 @@ class FirestoreService {
 
     final Map<String, Map<String, dynamic>> profiles = {};
 
-    for (var uid in uids) {
-      final profile = await getUserProfile(uid);
+    // Parallel fetch for speed
+    final futures = uids.map((uid) => getUserProfile(uid));
+    final results = await Future.wait(futures);
+
+    for (final profile in results) {
       if (profile != null) {
+        final uid = profile['id'] as String;
         profiles[uid] = profile;
       }
     }
@@ -651,6 +770,7 @@ class FirestoreService {
       _rooms.doc(roomId).collection('payments');
 
   /// Add a payment record (Member A paid Member B)
+  /// Add a payment record (Member A paid Member B)
   Future<void> addPayment({
     required String roomId,
     required String payerId,
@@ -668,6 +788,63 @@ class FirestoreService {
       'createdAt': FieldValue.serverTimestamp(),
       'createdBy': createdBy,
     });
+
+    // Add Audit Log
+    try {
+      final payerProfile = await getUserProfile(payerId);
+      final receiverProfile = await getUserProfile(receiverId);
+      final payerName = payerProfile?['displayName'] ?? 'Unknown';
+      final receiverName = receiverProfile?['displayName'] ?? 'Unknown';
+
+      await _rooms.doc(roomId).collection('auditLog').add({
+        'action':
+            'created', // Using generic 'created' or 'payment' if supported
+        'performedBy': createdBy,
+        'timestamp': FieldValue.serverTimestamp(),
+        'expenseDescription': 'Payment: $payerName → $receiverName',
+        'changes': {'amount': '$amount'},
+      });
+    } catch (_) {
+      // Ignore audit failure
+    }
+
+    // Send Notification
+    try {
+      // If Payer added it, notify Receiver
+      if (createdBy == payerId) {
+        final payerProfile = await getUserProfile(payerId);
+        final payerName = payerProfile?['displayName'] ?? 'Member';
+        await createNotification(
+          roomId: roomId,
+          userId: receiverId,
+          type: NotificationType.paymentRecorded,
+          title: 'Payment Received',
+          message: '$payerName recorded a payment of $amount to you.',
+          actorId: payerId,
+          actorName: payerName,
+        );
+      }
+      // If Receiver added it, notify Payer
+      else if (createdBy == receiverId) {
+        final receiverProfile = await getUserProfile(receiverId);
+        final receiverName = receiverProfile?['displayName'] ?? 'Member';
+        await createNotification(
+          roomId: roomId,
+          userId: payerId,
+          type: NotificationType.paymentRecorded,
+          title: 'Payment Recorded',
+          message: '$receiverName recorded a payment of $amount from you.',
+          actorId: receiverId,
+          actorName: receiverName,
+        );
+      }
+      // If someone else added it, notify both (optional, but good practice)
+      else {
+        // ... logic for 3rd party adding payment if needed
+      }
+    } catch (e) {
+      print('Failed to send payment notification: $e');
+    }
   }
 
   /// Stream all payments for a room
@@ -683,67 +860,172 @@ class FirestoreService {
   }
 
   /// Delete a payment
-  Future<void> deletePayment(String roomId, String paymentId) async {
+  /// Delete a payment
+  Future<void> deletePayment(
+    String roomId,
+    String paymentId,
+    String deletedBy,
+  ) async {
     await paymentsRef(roomId).doc(paymentId).delete();
+
+    // Add Audit Log
+    try {
+      await _rooms.doc(roomId).collection('auditLog').add({
+        'action': 'deleted',
+        'performedBy': deletedBy,
+        'timestamp': FieldValue.serverTimestamp(),
+        'expenseDescription': 'Payment deleted',
+      });
+    } catch (_) {
+      // Ignore audit failure
+    }
   }
 
   /// ---------------------------
   /// TASK INSTANCES & MANAGEMENT
   /// ---------------------------
 
-  /// Get today's tasks for a user across all their rooms (live collectionGroup stream)
+  // ---------- Real-time Helper ----------
+
+  /// Combines streams from all rooms a user is in.
+  /// 1. Listens to the user's room list.
+  /// 2. Subscribes to a query for each room.
+  /// 3. Emits a combined, sorted list whenever ANY data changes.
+  Stream<List<Map<String, dynamic>>> _roomsTaskStream({
+    required String userId,
+    required Query Function(String roomId) queryBuilder,
+    required int Function(Map<String, dynamic> a, Map<String, dynamic> b)
+    sorter,
+  }) {
+    // We use a StreamController to emit the final combined list
+    // We can't use rxdart without adding the dependency, so we implement a manual SwitchMap + CombineLatest style logic.
+    StreamController<List<Map<String, dynamic>>>? controller;
+
+    // The subscription to the list of rooms
+    StreamSubscription? roomsSubscription;
+
+    // Map of RoomId -> Subscription to that room's tasks
+    final Map<String, StreamSubscription> roomSubscriptions = {};
+
+    // Map of RoomId -> List of tasks (latest data)
+    final Map<String, List<Map<String, dynamic>>> roomData = {};
+
+    // Helper to emit the current state
+    void emit() {
+      if (controller == null || controller.isClosed) return;
+      final all = roomData.values.expand((x) => x).toList();
+      all.sort(sorter);
+      controller.add(all);
+    }
+
+    controller = StreamController<List<Map<String, dynamic>>>.broadcast(
+      onListen: () {
+        // 1. Subscribe to the user's rooms
+        roomsSubscription = _rooms
+            .where('members', arrayContains: userId)
+            .snapshots()
+            .listen((roomsSnap) {
+              final currentRoomIds = roomsSnap.docs.map((d) => d.id).toSet();
+
+              // A. Remove stale subscriptions
+              final staleIds = roomSubscriptions.keys
+                  .where((id) => !currentRoomIds.contains(id))
+                  .toList();
+              for (final id in staleIds) {
+                roomSubscriptions[id]?.cancel();
+                roomSubscriptions.remove(id);
+                roomData.remove(id);
+              }
+
+              // B. Add new subscriptions or update existing
+              for (final doc in roomsSnap.docs) {
+                final roomId = doc.id;
+                final roomName =
+                    (doc.data() as Map<String, dynamic>)['name'] ?? 'Room';
+
+                if (!roomSubscriptions.containsKey(roomId)) {
+                  // Create query using the provided builder
+                  final query = queryBuilder(roomId);
+
+                  roomSubscriptions[roomId] = query.snapshots().listen((
+                    taskSnap,
+                  ) {
+                    // Process these tasks
+                    final tasks = taskSnap.docs.map((d) {
+                      final m = d.data() as Map<String, dynamic>;
+                      return {
+                        ...m,
+                        'taskInstanceId': d.id,
+                        'roomId': roomId,
+                        'roomName': roomName,
+                      };
+                    }).toList();
+
+                    // Client-side filtering if needed (e.g. for assignedTo)
+                    // We assume the queryBuilder does most of the heavy lifting,
+                    // but we might need to filter 'assignedTo' if the query didn't cover it fully
+                    // (e.g. if avoiding composite indexes).
+                    // For simplicity, we'll let the caller handle complex filtering if they strictly query by date
+                    // or we can filter here.
+                    // Let's rely on the queryBuilder to be specific.
+
+                    roomData[roomId] = tasks;
+                    emit();
+                  });
+                }
+              }
+
+              // If no rooms, emit empty
+              if (currentRoomIds.isEmpty) {
+                roomData.clear();
+                emit();
+              }
+            });
+      },
+      onCancel: () {
+        roomsSubscription?.cancel();
+        for (final sub in roomSubscriptions.values) {
+          sub.cancel();
+        }
+      },
+    );
+
+    return controller.stream;
+  }
+
+  /// Get today's tasks for a user (Real-time)
   Stream<List<Map<String, dynamic>>> getTodayTasksForUser(String userId) {
     final today = DateTime.now();
     final startOfDay = DateTime(today.year, today.month, today.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
+    final startOfDayTs = Timestamp.fromDate(startOfDay);
+    final endOfDayTs = Timestamp.fromDate(endOfDay);
 
-    // Reduced to single where clause on assignedTo + client-side date filtering
-    // to avoid composite index requirement
-    return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
-      roomsSnap,
-    ) async {
-      final List<Map<String, dynamic>> all = [];
-      for (final room in roomsSnap.docs) {
-        final roomId = room.id;
-        final roomName =
-            (room.data() as Map<String, dynamic>)['name'] ?? 'Room';
-        // Only filter by assignedTo (one where clause)
-        final q = _rooms
+    return _roomsTaskStream(
+      userId: userId,
+      queryBuilder: (roomId) {
+        // Query by Date
+        return _rooms
             .doc(roomId)
             .collection('taskInstances')
-            .where('assignedTo', isEqualTo: userId);
-        final snap = await q.get();
-
-        final startOfDayTs = Timestamp.fromDate(startOfDay);
-        final endOfDayTs = Timestamp.fromDate(endOfDay);
-
-        for (final d in snap.docs) {
-          final m = d.data();
-          final scheduledDate = m['scheduledDate'] as Timestamp?;
-
-          // Client-side date filtering for today only
-          if (scheduledDate != null &&
-              scheduledDate.compareTo(startOfDayTs) >= 0 &&
-              scheduledDate.compareTo(endOfDayTs) < 0) {
-            all.add({
-              ...m,
-              'taskInstanceId': d.id,
-              'roomId': roomId,
-              'roomName': roomName,
-            });
-          }
-        }
-      }
-      all.sort((a, b) {
+            .where('scheduledDate', isGreaterThanOrEqualTo: startOfDayTs)
+            .where('scheduledDate', isLessThan: endOfDayTs);
+      },
+      sorter: (a, b) {
         final aDate = (a['scheduledDate'] as Timestamp).toDate();
         final bDate = (b['scheduledDate'] as Timestamp).toDate();
         return aDate.compareTo(bDate);
-      });
-      return all;
+      },
+    ).map((allTasks) {
+      // Filter by AssignedTo (client-side to avoid composite index)
+      return allTasks.where((t) {
+        final assignedTo = t['assignedTo'];
+        return assignedTo == userId || assignedTo == 'volunteer';
+      }).toList();
     });
   }
 
-  /// Get upcoming tasks for a user (next 30 days)
+  /// Get upcoming tasks for a user (Real-time)
   Stream<List<Map<String, dynamic>>> getUpcomingTasksForUser(String userId) {
     final today = DateTime.now();
     final tomorrow = DateTime(
@@ -752,50 +1034,28 @@ class FirestoreService {
       today.day,
     ).add(const Duration(days: 1));
     final nextThirtyDays = tomorrow.add(const Duration(days: 30));
+    final tomorrowTs = Timestamp.fromDate(tomorrow);
+    final nextThirtyDaysTs = Timestamp.fromDate(nextThirtyDays);
 
-    // Reduced to single where clause on assignedTo + client-side date filtering
-    // to avoid composite index requirement
-    return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
-      roomsSnap,
-    ) async {
-      final List<Map<String, dynamic>> all = [];
-      for (final room in roomsSnap.docs) {
-        final roomId = room.id;
-        final roomName =
-            (room.data() as Map<String, dynamic>)['name'] ?? 'Room';
-        // Only filter by assignedTo (one where clause)
-        final q = _rooms
+    return _roomsTaskStream(
+      userId: userId,
+      queryBuilder: (roomId) {
+        return _rooms
             .doc(roomId)
             .collection('taskInstances')
-            .where('assignedTo', isEqualTo: userId);
-        final snap = await q.get();
-
-        final tomorrowTs = Timestamp.fromDate(tomorrow);
-        final nextThirtyDaysTs = Timestamp.fromDate(nextThirtyDays);
-
-        for (final d in snap.docs) {
-          final m = d.data();
-          final scheduledDate = m['scheduledDate'] as Timestamp?;
-
-          // Client-side date filtering
-          if (scheduledDate != null &&
-              scheduledDate.compareTo(tomorrowTs) >= 0 &&
-              scheduledDate.compareTo(nextThirtyDaysTs) < 0) {
-            all.add({
-              ...m,
-              'taskInstanceId': d.id,
-              'roomId': roomId,
-              'roomName': roomName,
-            });
-          }
-        }
-      }
-      all.sort((a, b) {
+            .where('scheduledDate', isGreaterThanOrEqualTo: tomorrowTs)
+            .where('scheduledDate', isLessThan: nextThirtyDaysTs);
+      },
+      sorter: (a, b) {
         final aDate = (a['scheduledDate'] as Timestamp).toDate();
         final bDate = (b['scheduledDate'] as Timestamp).toDate();
         return aDate.compareTo(bDate);
-      });
-      return all;
+      },
+    ).map((allTasks) {
+      return allTasks.where((t) {
+        final assignedTo = t['assignedTo'];
+        return assignedTo == userId || assignedTo == 'volunteer';
+      }).toList();
     });
   }
 
@@ -839,21 +1099,116 @@ class FirestoreService {
     return membersWithProfiles;
   }
 
+  /// Get pending swap requests for a user (either direct or open) - Scoped to Room
+  Stream<List<Map<String, dynamic>>> getPendingSwapRequests(
+    String roomId,
+    String currentUserId,
+  ) {
+    return _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .where('swapRequest.status', isEqualTo: 'pending')
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs
+              .map((doc) {
+                final data = doc.data();
+                data['taskInstanceId'] = doc.id;
+                data['roomId'] = roomId;
+                return data;
+              })
+              .where((data) {
+                final request = data['swapRequest'] as Map<String, dynamic>?;
+                if (request == null) return false;
+
+                final targetId = request['targetId'] as String?;
+                final requesterId = request['requesterId'] as String?;
+                final offeredId = request['offeredTaskInstanceId'] as String?;
+
+                // Phase 1: No offer yet.
+                if (offeredId == null) {
+                  if (requesterId == currentUserId) return false;
+                  return targetId == null || targetId == currentUserId;
+                }
+                return false;
+              })
+              .toList();
+        });
+  }
+
+  /// Get swap offers for a user (tasks I requested a swap for, and someone replied)
+  Stream<List<Map<String, dynamic>>> getSwapOffersForUser(String userId) {
+    // We need to query all rooms for tasks where:
+    // 1. swapRequest.requesterId == userId
+    // 2. swapRequest.status == 'pending_approval' (Phase 2 complete)
+
+    // Using collectionGroup query would require a composite index on requesterId + status.
+    // To avoid index creation during this session, we'll reuse the rooms-based approach.
+
+    return _rooms.where('members', arrayContains: userId).snapshots().asyncMap((
+      roomsSnap,
+    ) async {
+      final List<Map<String, dynamic>> allOffers = [];
+
+      for (final room in roomsSnap.docs) {
+        final roomId = room.id;
+        final roomData = room.data() as Map<String, dynamic>;
+        final roomName = roomData['name'] ?? 'Room';
+
+        final snap = await _rooms
+            .doc(roomId)
+            .collection('taskInstances')
+            .where('swapRequest.requesterId', isEqualTo: userId)
+            .where('swapRequest.status', isEqualTo: 'pending_approval')
+            .get();
+
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          allOffers.add({
+            ...data,
+            'taskInstanceId': doc.id,
+            'roomId': roomId,
+            'roomName': roomName,
+          });
+        }
+      }
+      return allOffers;
+    });
+  }
+
+  /// Withdraw a pending swap request
+  Future<void> withdrawSwapRequest({
+    required String roomId,
+    required String taskInstanceId,
+  }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) throw Exception('User not logged in');
+
+    await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId)
+        .update({'swapRequest': FieldValue.delete()});
+  }
+
   /// Create a swap request
   Future<void> createSwapRequest({
     required String roomId,
     required String taskInstanceId,
-    required String targetUserId,
+    required String? targetUserId,
   }) async {
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
     if (currentUserId == null) throw Exception('User not logged in');
 
     // Get requester and target names
     final requesterProfile = await getUserProfile(currentUserId);
-    final targetProfile = await getUserProfile(targetUserId);
-
     final requesterName = requesterProfile?['displayName'] ?? 'Member';
-    final targetName = targetProfile?['displayName'] ?? 'Member';
+
+    String targetName = 'Anyone';
+    if (targetUserId != null) {
+      final targetProfile = await getUserProfile(targetUserId);
+      targetName = targetProfile?['displayName'] ?? 'Member';
+    }
 
     await _rooms
         .doc(roomId)
@@ -863,33 +1218,115 @@ class FirestoreService {
           'swapRequest': {
             'requesterId': currentUserId,
             'requesterName': requesterName,
-            'targetId': targetUserId,
+            'targetId': targetUserId, // can be null
             'targetName': targetName,
             'status': 'pending',
             'createdAt': FieldValue.serverTimestamp(),
           },
         });
 
-    // Create notification for the target user
-    try {
-      await createNotification(
-        roomId: roomId,
-        userId: targetUserId,
-        type: NotificationType.taskSwapRequest,
-        title: 'Task Swap Request',
-        message: '$requesterName wants to swap tasks with you',
-        actorId: currentUserId,
-        actorName: requesterName,
-        taskInstanceId: taskInstanceId,
-      );
-      print('✅ Swap request notification created for user: $targetUserId');
-    } catch (e) {
-      print('❌ Error creating swap notification: $e');
+    // Create notification
+    if (targetUserId != null) {
+      try {
+        await createNotification(
+          roomId: roomId,
+          userId: targetUserId,
+          type: NotificationType.taskSwapRequest,
+          title: 'Task Swap Request',
+          message: '$requesterName wants to swap tasks with you',
+          actorId: currentUserId,
+          actorName: requesterName,
+          taskInstanceId: taskInstanceId,
+        );
+      } catch (e) {
+        print('❌ Error creating swap notification: $e');
+      }
+    } else {
+      // Notify all other members
+      try {
+        final members = await getRoomMembers(roomId);
+        for (final m in members) {
+          if (m['uid'] != currentUserId) {
+            await createNotification(
+              roomId: roomId,
+              userId: m['uid'],
+              type: NotificationType.taskSwapRequest,
+              title: 'Open Swap Request',
+              message: '$requesterName is looking to swap a task with anyone',
+              actorId: currentUserId,
+              actorName: requesterName,
+              taskInstanceId: taskInstanceId,
+            );
+          }
+        }
+      } catch (e) {
+        print('❌ Error creating broadcast notification: $e');
+      }
     }
   }
 
-  /// Respond to a swap request
-  Future<void> respondToSwapRequest({
+  /// Step 2: Responder proposes a task to swap
+  Future<void> proposeSwap({
+    required String roomId,
+    required String taskInstanceId,
+    required String offeredTaskInstanceId,
+  }) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) throw Exception('User not logged in');
+
+    final responderProfile = await getUserProfile(currentUserId);
+    final responderName = responderProfile?['displayName'] ?? 'Member';
+
+    // Get offered task details for notification context
+    final offeredTaskDoc = await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(offeredTaskInstanceId)
+        .get();
+    final offeredTaskTitle = offeredTaskDoc.data()?['title'] ?? 'Task';
+    final offeredTaskDate =
+        (offeredTaskDoc.data()?['scheduledDate'] as Timestamp?)?.toDate();
+
+    await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId)
+        .update({
+          'swapRequest.responderId': currentUserId,
+          'swapRequest.responderName': responderName,
+          'swapRequest.offeredTaskInstanceId': offeredTaskInstanceId,
+          'swapRequest.offeredTaskTitle': offeredTaskTitle,
+          'swapRequest.offeredTaskDate': offeredTaskDate != null
+              ? Timestamp.fromDate(offeredTaskDate)
+              : null,
+          'swapRequest.status': 'pending_approval',
+          'swapRequest.respondedAt': FieldValue.serverTimestamp(),
+        });
+
+    // Notify original requester
+    final taskDoc = await _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .doc(taskInstanceId)
+        .get();
+    final requesterId = taskDoc.data()?['swapRequest']['requesterId'];
+
+    if (requesterId != null) {
+      await createNotification(
+        roomId: roomId,
+        userId: requesterId,
+        type: NotificationType.taskSwapRequest,
+        title: 'Swap Offer Received',
+        message: '$responderName offered "$offeredTaskTitle" for your task',
+        actorId: currentUserId,
+        actorName: responderName,
+        taskInstanceId: taskInstanceId,
+      );
+    }
+  }
+
+  /// Step 3: Initiator finalizes the swap (Accept/Reject)
+  Future<void> finalizeSwap({
     required String roomId,
     required String taskInstanceId,
     required bool approve,
@@ -897,205 +1334,96 @@ class FirestoreService {
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
     if (currentUserId == null) throw Exception('User not logged in');
 
-    final taskInstanceRef = _rooms
+    final taskRef = _rooms
         .doc(roomId)
         .collection('taskInstances')
         .doc(taskInstanceId);
-    final taskInstanceDoc = await taskInstanceRef.get();
+    final taskDoc = await taskRef.get();
+    if (!taskDoc.exists) throw Exception('Task not found');
 
-    if (!taskInstanceDoc.exists) throw Exception('Task instance not found');
-
-    final taskData = taskInstanceDoc.data()!;
-    final swapRequest = taskData['swapRequest'] as Map<String, dynamic>?;
-
-    if (swapRequest == null) throw Exception('No swap request found');
-
-    final requesterId = swapRequest['requesterId'];
-
-    // Get current user's name
-    final currentUserProfile = await getUserProfile(currentUserId);
-    final currentUserName = currentUserProfile?['displayName'] ?? 'Member';
+    final data = taskDoc.data()!;
+    final swapRequest = data['swapRequest'] as Map<String, dynamic>;
+    final responderId = swapRequest['responderId'] as String;
+    final offeredTaskInstanceId =
+        swapRequest['offeredTaskInstanceId'] as String;
 
     if (approve) {
-      final currentAssignee = taskData['assignedTo'];
-      final taskId = taskData['taskId']; // The actual task definition
-      final scheduledDate = taskData['scheduledDate'] as Timestamp;
-      final scheduledDateOnly = DateTime(
-        scheduledDate.toDate().year,
-        scheduledDate.toDate().month,
-        scheduledDate.toDate().day,
-      );
-
-      debugPrint(
-        '🔄 Swap: User($currentAssignee) ↔ Requester($requesterId) for task=$taskId',
-      );
-
-      // Find the requester's NEXT instance of the SAME TASK (on or after current date)
-      final requesterTasksSnapshot = await _rooms
+      // 1. Get offered task
+      final offeredTaskRef = _rooms
           .doc(roomId)
           .collection('taskInstances')
-          .where('assignedTo', isEqualTo: requesterId)
-          .where('taskId', isEqualTo: taskId)
-          .get();
+          .doc(offeredTaskInstanceId);
+      final offeredDoc = await offeredTaskRef.get();
 
-      // Client-side filter: find the next instance on or after the scheduled date
-      final requesterNextTask = requesterTasksSnapshot.docs.where((doc) {
-        final docDate = DateTime(
-          (doc['scheduledDate'] as Timestamp).toDate().year,
-          (doc['scheduledDate'] as Timestamp).toDate().month,
-          (doc['scheduledDate'] as Timestamp).toDate().day,
-        );
-        return docDate.compareTo(scheduledDateOnly) >= 0;
-      }).toList();
+      if (!offeredDoc.exists) throw Exception('Offered task no longer exists');
 
-      requesterNextTask.sort((a, b) {
-        final dateA = (a['scheduledDate'] as Timestamp).toDate();
-        final dateB = (b['scheduledDate'] as Timestamp).toDate();
-        return dateA.compareTo(dateB);
-      });
+      final requesterName = swapRequest['requesterName'] ?? 'Member';
+      final responderName = swapRequest['responderName'] ?? 'Member';
 
-      if (requesterNextTask.isEmpty) {
-        throw Exception('No upcoming instance found for requester to swap');
-      }
+      final requestTaskTitle = data['title'] ?? 'Task';
+      final requestDate = data['scheduledDate'];
+      final offeredDate = offeredDoc.data()?['scheduledDate'];
 
-      // Swap the assignees for both task instances
-      final requesterTaskInstanceId = requesterNextTask.first.id;
-      final requesterScheduledDate = requesterNextTask.first['scheduledDate'];
+      // 2. Perform Swap
+      final batch = _db.batch();
 
-      debugPrint(
-        '✅ Swapping: User($currentAssignee, Dec ${scheduledDateOnly.day}) ↔ Requester($requesterId, Dec ${(requesterScheduledDate as Timestamp).toDate().day})',
-      );
-
-      // Fetch both user profiles once to avoid multiple calls
-      final requesterProfile = await getUserProfile(requesterId);
-      final requesterName = requesterProfile?['displayName'] ?? 'Member';
-      final currentUserProfile = await getUserProfile(currentAssignee);
-      final currentUserDisplayName =
-          currentUserProfile?['displayName'] ?? 'Member';
-
-      // Current user gets the requester's task instance
-      await taskInstanceRef.update({
-        'assignedTo': requesterId,
-        'swapRequest.status': 'approved',
-        'swapRequest.approvedAt': FieldValue.serverTimestamp(),
+      // Update Initiator's Task (assigned to Responder)
+      batch.update(taskRef, {
+        'assignedTo': responderId,
+        'swapRequest': FieldValue.delete(), // Clear request
         'swappedWith': {
-          'userId': requesterId,
-          'userName': requesterName,
-          'originalDate': requesterScheduledDate,
+          'userId': responderId,
+          'userName': responderName,
+          'originalDate': offeredDate,
           'swappedAt': FieldValue.serverTimestamp(),
-          'swappedBy': currentUserName,
+          'swappedBy': requesterName,
         },
       });
 
-      // Requester gets the current user's task instance with swap info
-      await _rooms
-          .doc(roomId)
-          .collection('taskInstances')
-          .doc(requesterTaskInstanceId)
-          .update({
-            'assignedTo': currentAssignee,
-            'swappedWith': {
-              'userId': currentAssignee,
-              'userName': currentUserDisplayName,
-              'originalDate': scheduledDate,
-              'swappedAt': FieldValue.serverTimestamp(),
-              'swappedBy': currentUserName,
-            },
-            'swapRequest':
-                null, // Clear any pending swap request on requester's task
-          });
+      // Update Responder's Task (assigned to Initiator)
+      batch.update(offeredTaskRef, {
+        'assignedTo': currentUserId,
+        'swappedWith': {
+          'userId': currentUserId,
+          'userName': requesterName,
+          'originalDate': requestDate,
+          'swappedAt': FieldValue.serverTimestamp(),
+          'swappedBy': requesterName,
+        },
+      });
 
-      // Create notification for the requester
+      await batch.commit();
+
+      // 3. Notify Responder
       await createNotification(
         roomId: roomId,
-        userId: requesterId,
+        userId: responderId,
         type: NotificationType.taskSwapApproved,
-        title: 'Swap Request Approved',
-        message: '$currentUserName approved your swap request',
+        title: 'Swap Finalized',
+        message:
+            '$requesterName accepted your offer. You are now assigned "$requestTaskTitle".',
         actorId: currentUserId,
-        actorName: currentUserName,
+        actorName: requesterName,
         taskInstanceId: taskInstanceId,
-      );
-      // Update the original swap request notification for the approver to show decision
-      await _updateSwapRequestNotificationStatus(
-        roomId: roomId,
-        userId: currentUserId,
-        taskInstanceId: taskInstanceId,
-        decision: 'approved',
       );
     } else {
-      await taskInstanceRef.update({
+      // Reject
+      await taskRef.update({
         'swapRequest.status': 'rejected',
         'swapRequest.rejectedAt': FieldValue.serverTimestamp(),
       });
 
-      // Create notification for the requester
       await createNotification(
         roomId: roomId,
-        userId: requesterId,
+        userId: responderId,
         type: NotificationType.taskSwapRejected,
-        title: 'Swap Request Rejected',
-        message: '$currentUserName rejected your swap request',
+        title: 'Swap Offer Rejected',
+        message: 'Your swap offer was rejected.',
         actorId: currentUserId,
-        actorName: currentUserName,
+        actorName: 'Member',
         taskInstanceId: taskInstanceId,
       );
-      await _updateSwapRequestNotificationStatus(
-        roomId: roomId,
-        userId: currentUserId,
-        taskInstanceId: taskInstanceId,
-        decision: 'rejected',
-      );
     }
-  }
-
-  /// Update a pending swap request notification (for responder) with decision metadata
-  Future<void> _updateSwapRequestNotificationStatus({
-    required String roomId,
-    required String userId,
-    required String taskInstanceId,
-    required String decision,
-  }) async {
-    try {
-      final q = await _notificationsRef()
-          .where('roomId', isEqualTo: roomId)
-          .where('userId', isEqualTo: userId)
-          .where('taskInstanceId', isEqualTo: taskInstanceId)
-          .where('type', isEqualTo: NotificationType.taskSwapRequest.name)
-          .limit(1)
-          .get();
-      if (q.docs.isEmpty) return;
-      await q.docs.first.reference.update({
-        'swapDecision': decision,
-        'decisionAt': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      // ignore failure so core flow still works
-      print('Swap notification status update failed: $e');
-    }
-  }
-
-  /// Request reschedule
-  Future<void> requestReschedule({
-    required String roomId,
-    required String taskInstanceId,
-    required DateTime newDate,
-  }) async {
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUserId == null) throw Exception('User not logged in');
-
-    await _rooms
-        .doc(roomId)
-        .collection('taskInstances')
-        .doc(taskInstanceId)
-        .update({
-          'rescheduleRequest': {
-            'requestedBy': currentUserId,
-            'newDate': Timestamp.fromDate(newDate),
-            'status': 'pending',
-            'createdAt': FieldValue.serverTimestamp(),
-          },
-        });
   }
 
   /// Generate task instances for a room (for the next 30 days)
@@ -1117,7 +1445,12 @@ class FirestoreService {
       final taskId = taskDoc.id;
       final frequency = taskData['frequency'] as String?;
       final rotationType = taskData['rotationType'] as String?;
-      final memberIds = List<String>.from(taskData['memberIds'] ?? []);
+      final weekDays =
+          (taskData['weekDays'] as List<dynamic>?)?.cast<int>() ?? [];
+      final monthDay = taskData['monthDay'] as int?;
+      final memberIds = List<String>.from(
+        taskData['memberIds'] ?? [],
+      ); // Restored
 
       // Try to get title from multiple possible field names
       final title =
@@ -1132,11 +1465,73 @@ class FirestoreService {
           taskData['currentRotationIndex'] as int? ?? 0;
 
       if (memberIds.isEmpty) continue;
-      if (frequency != 'daily') continue; // Only handle daily tasks for now
 
       // Generate instances for the next X days
       for (int dayOffset = 0; dayOffset < daysAhead; dayOffset++) {
         final targetDate = today.add(Duration(days: dayOffset));
+
+        bool shouldGenerate = false;
+        switch (frequency) {
+          case 'daily':
+            shouldGenerate = true;
+            break;
+          case 'weekly':
+            if (weekDays.isNotEmpty) {
+              if (weekDays.contains(targetDate.weekday)) shouldGenerate = true;
+            } else {
+              // Fallback: use created day of week if no specific days set
+              // Or default to Monday (1)
+              shouldGenerate = targetDate.weekday == 1;
+            }
+            break;
+          case 'monthly':
+            if (monthDay != null) {
+              shouldGenerate = targetDate.day == monthDay;
+            } else {
+              // Fallback
+              shouldGenerate = targetDate.day == 1;
+            }
+            break;
+          case 'biweekly':
+            // Calculate weeks since creation
+            final daysSinceCreation = targetDate
+                .difference(
+                  taskData['createdAt'] != null
+                      ? (taskData['createdAt'] as Timestamp).toDate()
+                      : today,
+                )
+                .inDays;
+            final weekIndex = (daysSinceCreation / 7).floor();
+
+            // Check if it's an "active" week (every 2nd week)
+            if (weekIndex % 2 == 0) {
+              if (weekDays.isNotEmpty) {
+                if (weekDays.contains(targetDate.weekday)) {
+                  shouldGenerate = true;
+                }
+              } else {
+                // Fallback to creation day of week or Monday
+                final createdWeekday = taskData['createdAt'] != null
+                    ? (taskData['createdAt'] as Timestamp).toDate().weekday
+                    : 1;
+                shouldGenerate = targetDate.weekday == createdWeekday;
+              }
+            }
+            break;
+
+          case 'custom':
+            final repeatInterval = taskData['repeatInterval'] as int? ?? 1;
+            final createdAt = taskData['createdAt'] != null
+                ? (taskData['createdAt'] as Timestamp).toDate()
+                : today;
+            final daysSinceCreation = targetDate.difference(createdAt).inDays;
+
+            shouldGenerate = daysSinceCreation % repeatInterval == 0;
+            break;
+        }
+
+        if (!shouldGenerate) continue;
+
         final scheduledDate = Timestamp.fromDate(targetDate);
 
         // Use deterministic document ID to prevent duplicates: taskId_YYYYMMDD
@@ -1154,15 +1549,44 @@ class FirestoreService {
         }
 
         // Calculate assignee based on rotation
-        String assignedTo;
-        if (rotationType == 'roundRobin') {
-          // Auto-rotate: assign based on day offset + current index
+        // Use frequency-specific rotation seed to ensure correct stepping
+        int rotationSeed;
+        final daysSinceEpoch = targetDate.millisecondsSinceEpoch ~/ 86400000;
+
+        switch (frequency) {
+          case 'daily':
+            rotationSeed = daysSinceEpoch;
+            break;
+          case 'weekly':
+            // Rotate once per week
+            rotationSeed = daysSinceEpoch ~/ 7;
+            break;
+          case 'biweekly':
+            // Rotate once every 2 weeks
+            rotationSeed = (daysSinceEpoch ~/ 7) ~/ 2;
+            break;
+          case 'monthly':
+            // Rotate once per month
+            rotationSeed = targetDate.year * 12 + targetDate.month;
+            break;
+          case 'custom':
+            final repeatInterval = taskData['repeatInterval'] as int? ?? 1;
+            rotationSeed = daysSinceEpoch ~/ repeatInterval;
+            break;
+          default:
+            rotationSeed = daysSinceEpoch;
+        }
+
+        String? assignedTo;
+        if (rotationType == 'volunteer') {
+          assignedTo = 'volunteer';
+        } else if (rotationType == 'roundRobin') {
           final assigneeIndex =
-              (currentRotationIndex + dayOffset) % memberIds.length;
+              (currentRotationIndex + rotationSeed).abs() % memberIds.length;
           assignedTo = memberIds[assigneeIndex];
         } else {
-          // Manual or other: assign to current rotation index
-          assignedTo = memberIds[currentRotationIndex % memberIds.length];
+          // Manual: Always assign to the first selected member
+          assignedTo = memberIds.isNotEmpty ? memberIds[0] : null;
         }
 
         // Create task instance with deterministic ID
@@ -1225,6 +1649,7 @@ class FirestoreService {
     String roomId,
     String taskId, {
     int daysAhead = 30,
+    bool checkExisting = true,
   }) async {
     final taskDoc = await _rooms
         .doc(roomId)
@@ -1239,7 +1664,13 @@ class FirestoreService {
 
     final frequency = taskData['frequency'] as String?;
     final rotationType = taskData['rotationType'] as String?;
-    final memberIds = List<String>.from(taskData['memberIds'] ?? []);
+    final weekDays =
+        (taskData['weekDays'] as List<dynamic>?)?.cast<int>() ?? [];
+    final monthDay = taskData['monthDay'] as int?;
+    final memberIds = List<String>.from(
+      taskData['memberIds'] ?? [],
+    ); // Restored
+
     final title =
         (taskData['title'] as String?) ??
         (taskData['name'] as String?) ??
@@ -1249,34 +1680,133 @@ class FirestoreService {
     final estimatedMinutes = taskData['estimatedMinutes'] as int? ?? 30;
     final currentRotationIndex = taskData['currentRotationIndex'] as int? ?? 0;
 
-    if (memberIds.isEmpty) return;
-    if (frequency != 'daily') return;
+    if (memberIds.isEmpty && rotationType != 'volunteer') return;
 
     // Use a single batch for performance and deterministic doc IDs for idempotency.
     final batch = _rooms.firestore.batch();
 
     for (int dayOffset = 0; dayOffset < daysAhead; dayOffset++) {
       final targetDate = today.add(Duration(days: dayOffset));
-      final scheduledDate = Timestamp.fromDate(targetDate);
 
-      final assignedTo = (rotationType == 'roundRobin')
-          ? memberIds[(currentRotationIndex + dayOffset) % memberIds.length]
-          : memberIds[currentRotationIndex % memberIds.length];
+      bool shouldGenerate = false;
+      switch (frequency) {
+        case 'daily':
+          shouldGenerate = true;
+          break;
+        case 'weekly':
+          if (weekDays.isNotEmpty) {
+            if (weekDays.contains(targetDate.weekday)) {
+              shouldGenerate = true;
+            }
+          } else {
+            shouldGenerate = targetDate.weekday == 1; // Default Mon
+          }
+          break;
+        case 'monthly':
+          if (monthDay != null) {
+            shouldGenerate = targetDate.day == monthDay;
+          } else {
+            shouldGenerate = targetDate.day == 1; // Default 1st
+          }
+          break;
+        case 'biweekly':
+          final createdAt = taskData['createdAt'] != null
+              ? (taskData['createdAt'] as Timestamp).toDate()
+              : today; // Use today as fallback if createdAt is null
+          final daysSinceCreation = targetDate.difference(createdAt).inDays;
+          final weekIndex = (daysSinceCreation / 7).floor();
+          if (weekIndex % 2 == 0) {
+            if (weekDays.isNotEmpty) {
+              if (weekDays.contains(targetDate.weekday)) shouldGenerate = true;
+            } else {
+              shouldGenerate = targetDate.weekday == createdAt.weekday;
+            }
+          }
+          break;
+        case 'custom':
+          final repeatInterval = taskData['repeatInterval'] as int? ?? 1;
+          final createdAt = taskData['createdAt'] != null
+              ? (taskData['createdAt'] as Timestamp).toDate()
+              : today;
+          final daysSinceCreation = targetDate.difference(createdAt).inDays;
+
+          shouldGenerate = daysSinceCreation % repeatInterval == 0;
+          break;
+      }
+
+      if (!shouldGenerate) continue;
 
       final docId = _taskInstanceDocId(taskId, targetDate);
+
+      if (checkExisting) {
+        final existing = await _rooms
+            .doc(roomId)
+            .collection('taskInstances')
+            .doc(docId)
+            .get();
+
+        if (existing.exists) continue;
+      }
+
+      final scheduledDate = Timestamp.fromDate(targetDate);
+
+      // Calculate assignee based on rotation
+      int rotationSeed;
+      final daysSinceEpoch = targetDate.millisecondsSinceEpoch ~/ 86400000;
+
+      switch (frequency) {
+        case 'daily':
+          rotationSeed = daysSinceEpoch;
+          break;
+        case 'weekly':
+          // Rotate once per week
+          rotationSeed = daysSinceEpoch ~/ 7;
+          break;
+        case 'biweekly':
+          // Rotate once every 2 weeks
+          rotationSeed = (daysSinceEpoch ~/ 7) ~/ 2;
+          break;
+        case 'monthly':
+          // Rotate once per month
+          rotationSeed = targetDate.year * 12 + targetDate.month;
+          break;
+        case 'custom':
+          final repeatInterval = taskData['repeatInterval'] as int? ?? 1;
+          rotationSeed = daysSinceEpoch ~/ repeatInterval;
+          break;
+        default:
+          rotationSeed = daysSinceEpoch;
+      }
+
+      String? assignedTo;
+      if (rotationType == 'volunteer') {
+        assignedTo = 'volunteer';
+      } else if (rotationType == 'roundRobin') {
+        assignedTo =
+            memberIds[(currentRotationIndex + rotationSeed).abs() %
+                memberIds.length];
+      } else {
+        // Manual: Always assign to the first selected member
+        assignedTo = memberIds.isNotEmpty ? memberIds[0] : null;
+      }
+
       final ref = _rooms.doc(roomId).collection('taskInstances').doc(docId);
-      batch.set(ref, {
-        'taskId': taskId,
-        'roomId': roomId,
-        'title': title,
-        'categoryId': categoryId,
-        'assignedTo': assignedTo,
-        'scheduledDate': scheduledDate,
-        'timeSlot': timeSlot,
-        'estimatedMinutes': estimatedMinutes,
-        'isCompleted': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: false));
+      batch.set(
+        ref,
+        {
+          'taskId': taskId,
+          'roomId': roomId,
+          'title': title,
+          'categoryId': categoryId,
+          'assignedTo': assignedTo,
+          'scheduledDate': scheduledDate,
+          'timeSlot': timeSlot,
+          'estimatedMinutes': estimatedMinutes,
+          'isCompleted': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      ); // Ensure merge true so existing data (like completion) isn't wiped
     }
 
     await batch.commit();
@@ -1323,6 +1853,29 @@ class FirestoreService {
       }
       return null;
     });
+  }
+
+  /// Get task instances for a room within a date range
+  Stream<List<Map<String, dynamic>>> getTaskInstancesStream(
+    String roomId,
+    DateTime start,
+    DateTime end,
+  ) {
+    final startTs = Timestamp.fromDate(start);
+    final endTs = Timestamp.fromDate(end);
+
+    return _rooms
+        .doc(roomId)
+        .collection('taskInstances')
+        .where('scheduledDate', isGreaterThanOrEqualTo: startTs)
+        .where('scheduledDate', isLessThanOrEqualTo: endTs)
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {...data, 'taskInstanceId': doc.id};
+          }).toList();
+        });
   }
 
   /// Count overdue daily instances (not completed) looking back up to [lookbackDays]

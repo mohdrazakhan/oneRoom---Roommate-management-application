@@ -11,6 +11,7 @@ import 'providers/rooms_provider.dart';
 import 'providers/tasks_provider.dart';
 import 'services/firestore_service.dart';
 import 'services/notification_service.dart';
+import 'services/subscription_service.dart';
 import 'app.dart'; // contains MyApp + AuthWrapper + routes
 
 Future<void> main() async {
@@ -105,16 +106,25 @@ class RootApp extends StatelessWidget {
         // Auth provider - loaded immediately (needed for auth checks)
         ChangeNotifierProvider(create: (_) => AuthProvider()),
 
-        // Rooms provider - loaded immediately (needed for dashboard)
+        // Firestore Service (Independent)
+        Provider(create: (_) => FirestoreService()),
+
+        // Subscription Service (Depends on FirestoreService)
+        ChangeNotifierProxyProvider<FirestoreService, SubscriptionService>(
+          create: (context) => SubscriptionService(
+            Provider.of<FirestoreService>(context, listen: false),
+          ),
+          update: (context, fs, previous) =>
+              previous ?? SubscriptionService(fs),
+        ),
+
+        // Rooms provider (Independent)
         ChangeNotifierProvider(create: (_) => RoomsProvider()),
 
         // Tasks provider
         ChangeNotifierProvider(create: (_) => TasksProvider()),
-
-        // Firestore service
-        Provider(create: (_) => FirestoreService()),
       ],
-      child: const MyApp(), // MyApp is defined in app.dart
+      child: const MyApp(),
     );
   }
 }

@@ -1,6 +1,7 @@
 // ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import '../../widgets/safe_web_image.dart';
 import '../../Models/room.dart';
 import '../../services/firestore_service.dart';
 
@@ -16,11 +17,13 @@ class ExpenseAnalyticsScreen extends StatefulWidget {
 class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
   final _firestoreService = FirestoreService();
   Map<String, Map<String, dynamic>> _memberProfiles = {};
-  Map<String, double> _memberExpenses = {};
+  Map<String, double> _memberExpenses = {}; // Paid by member
+  Map<String, double> _memberConsumed = {}; // Consumed by member
   double _totalExpenditure = 0.0;
   int _totalTransactions = 0;
   bool _isLoading = true;
   int _touchedIndex = -1;
+  bool _showBySpender = true; // Toggle state for breakdown
 
   // Color palette for charts
   final List<Color> _chartColors = [
@@ -52,11 +55,31 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
           .getExpenses(widget.room.id)
           .first;
 
-      // Calculate totals by member
+      // Calculate totals by member (Spending)
       final Map<String, double> expensesByMember = {};
+      final Map<String, double> consumedByMember = {};
+
       for (final expense in expenses) {
-        expensesByMember[expense.paidBy] =
-            (expensesByMember[expense.paidBy] ?? 0.0) + expense.amount;
+        // Spending
+        String payerKey = expense.paidBy;
+        if (payerKey.startsWith('guest_')) {
+          payerKey = 'guests_aggregate';
+        }
+
+        expensesByMember[payerKey] =
+            (expensesByMember[payerKey] ?? 0.0) + expense.amount;
+
+        // Consumption
+        if (expense.splits.isNotEmpty) {
+          expense.splits.forEach((uid, amount) {
+            String consumerKey = uid;
+            if (consumerKey.startsWith('guest_')) {
+              consumerKey = 'guests_aggregate';
+            }
+            consumedByMember[consumerKey] =
+                (consumedByMember[consumerKey] ?? 0.0) + amount;
+          });
+        }
       }
 
       final total = expenses.fold<double>(0.0, (sum, exp) => sum + exp.amount);
@@ -65,6 +88,7 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
         setState(() {
           _memberProfiles = profiles;
           _memberExpenses = expensesByMember;
+          _memberConsumed = consumedByMember;
           _totalExpenditure = total;
           _totalTransactions = expenses.length;
           _isLoading = false;
@@ -79,6 +103,7 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
   }
 
   String _getMemberDisplayName(String uid) {
+    if (uid == 'guests_aggregate') return 'Guests';
     final profile = _memberProfiles[uid];
     if (profile == null) return 'Member ${uid.substring(0, 4)}';
 
@@ -104,12 +129,17 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
     final sections = <PieChartSectionData>[];
     int index = 0;
 
-    final sortedEntries = _memberExpenses.entries.toList()
+    final dataToUse = _showBySpender ? _memberExpenses : _memberConsumed;
+
+    final sortedEntries = dataToUse.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
+    // Use total expenditure for spending, but total consumption for consumer view?
+    // In a closed system, they should be the same.
+    final total = _totalExpenditure;
+
     for (final entry in sortedEntries) {
-      final percentage =
-          (_memberExpenses[entry.key]! / _totalExpenditure) * 100;
+      final percentage = (entry.value / total) * 100;
       final isTouched = index == _touchedIndex;
       final radius = isTouched ? 110.0 : 100.0;
       final fontSize = isTouched ? 18.0 : 14.0;
@@ -117,7 +147,7 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
       sections.add(
         PieChartSectionData(
           color: _getMemberColor(index),
-          value: _memberExpenses[entry.key],
+          value: entry.value,
           title: '${percentage.toStringAsFixed(1)}%',
           radius: radius,
           titleStyle: TextStyle(
@@ -132,41 +162,6 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
     }
 
     return sections;
-  }
-
-  List<BarChartGroupData> _getBarChartGroups() {
-    final groups = <BarChartGroupData>[];
-    int index = 0;
-
-    final sortedEntries = _memberExpenses.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    for (final entry in sortedEntries) {
-      groups.add(
-        BarChartGroupData(
-          x: index,
-          barRods: [
-            BarChartRodData(
-              toY: entry.value,
-              color: _getMemberColor(index),
-              width: 40,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(6),
-                topRight: Radius.circular(6),
-              ),
-              backDrawRodData: BackgroundBarChartRodData(
-                show: true,
-                toY: _totalExpenditure,
-                color: Colors.grey.withValues(alpha: 0.1),
-              ),
-            ),
-          ],
-        ),
-      );
-      index++;
-    }
-
-    return groups;
   }
 
   @override
@@ -198,22 +193,87 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
 
                   const SizedBox(height: 24),
 
-                  // Pie Chart Card
+                  // Global Toggle
+                  _buildToggleButtons(),
+
+                  const SizedBox(height: 24),
+
+                  // Pie Chart Card (Spending)
                   _buildPieChartCard(),
 
                   const SizedBox(height: 24),
 
-                  // Bar Chart Card
-                  _buildBarChartCard(),
-
-                  const SizedBox(height: 24),
-
-                  // Detailed List
+                  // Detailed List (Toggleable)
                   _buildDetailedList(),
 
                   const SizedBox(height: 40),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildToggleButtons() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _showBySpender = true),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _showBySpender
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  'By Spender',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: _showBySpender ? Colors.white : Colors.grey[600],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _showBySpender = false),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: !_showBySpender
+                      ? Theme.of(context).colorScheme.secondary
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  'By Consumer',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: !_showBySpender ? Colors.white : Colors.grey[600],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -272,7 +332,8 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
   }
 
   Widget _buildPieChartCard() {
-    if (_memberExpenses.isEmpty) {
+    final dataToUse = _showBySpender ? _memberExpenses : _memberConsumed;
+    if (dataToUse.isEmpty) {
       return _buildEmptyState();
     }
 
@@ -296,13 +357,20 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
             children: [
               Icon(
                 Icons.pie_chart_rounded,
-                color: Theme.of(context).colorScheme.primary,
+                color: _showBySpender
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.secondary,
                 size: 24,
               ),
               const SizedBox(width: 12),
-              const Text(
-                'Spending Distribution',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Text(
+                _showBySpender
+                    ? 'Spending Distribution'
+                    : 'Consumption Distribution',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -338,141 +406,10 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
     );
   }
 
-  Widget _buildBarChartCard() {
-    if (_memberExpenses.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final sortedEntries = _memberExpenses.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.bar_chart_rounded,
-                color: Theme.of(context).colorScheme.primary,
-                size: 24,
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'Comparison Chart',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            height: 250,
-            child: BarChart(
-              BarChartData(
-                alignment: BarChartAlignment.spaceEvenly,
-                maxY: _totalExpenditure * 1.1,
-                barTouchData: BarTouchData(
-                  enabled: true,
-                  touchTooltipData: BarTouchTooltipData(
-                    getTooltipColor: (group) => Colors.black87,
-                    tooltipPadding: const EdgeInsets.all(8),
-                    tooltipMargin: 8,
-                    getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                      final memberName = _getMemberDisplayName(
-                        sortedEntries[group.x.toInt()].key,
-                      );
-                      return BarTooltipItem(
-                        '$memberName\n${widget.room.currency}${rod.toY.toStringAsFixed(2)}',
-                        const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 40,
-                      getTitlesWidget: (value, meta) {
-                        if (value.toInt() >= sortedEntries.length) {
-                          return const SizedBox.shrink();
-                        }
-                        final name = _getMemberDisplayName(
-                          sortedEntries[value.toInt()].key,
-                        );
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            name.length > 8
-                                ? '${name.substring(0, 8)}...'
-                                : name,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 60,
-                      getTitlesWidget: (value, meta) {
-                        return Text(
-                          '${widget.room.currency}${(value / 1000).toStringAsFixed(0)}k',
-                          style: const TextStyle(fontSize: 10),
-                        );
-                      },
-                    ),
-                  ),
-                  topTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                ),
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: _totalExpenditure / 5,
-                  getDrawingHorizontalLine: (value) {
-                    return FlLine(
-                      color: Colors.grey.withValues(alpha: 0.2),
-                      strokeWidth: 1,
-                    );
-                  },
-                ),
-                borderData: FlBorderData(show: false),
-                barGroups: _getBarChartGroups(),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildLegend() {
-    final sortedEntries = _memberExpenses.entries.toList()
+    final dataToUse = _showBySpender ? _memberExpenses : _memberConsumed;
+
+    final sortedEntries = dataToUse.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return Wrap(
@@ -516,11 +453,13 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
   }
 
   Widget _buildDetailedList() {
-    if (_memberExpenses.isEmpty) {
+    final dataToUse = _showBySpender ? _memberExpenses : _memberConsumed;
+
+    if (dataToUse.isEmpty) {
       return const SizedBox.shrink();
     }
 
-    final sortedEntries = _memberExpenses.entries.toList()
+    final sortedEntries = dataToUse.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return Container(
@@ -539,21 +478,36 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header Row with Title
           Row(
             children: [
               Icon(
                 Icons.list_alt_rounded,
-                color: Theme.of(context).colorScheme.primary,
+                color: _showBySpender
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.secondary,
                 size: 24,
               ),
               const SizedBox(width: 12),
-              const Text(
-                'Detailed Breakdown',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              Text(
+                _showBySpender ? 'Spender Breakdown' : 'Consumer Breakdown',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
+
+          if (sortedEntries.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20.0),
+                child: Text('No data for this view'),
+              ),
+            ),
+
           ...sortedEntries.asMap().entries.map((entry) {
             final index = entry.key;
             final memberEntry = entry.value;
@@ -561,6 +515,9 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
             final profile = _memberProfiles[memberEntry.key];
             final photoUrl = profile?['photoUrl'] as String?;
             final amount = memberEntry.value;
+            // For percentage, Spender view uses Total Expenditure.
+            // Consumer view SHOULD also likely use Total Expenditure for context,
+            // assuming total consumption == total expenditure (which it should in a zero-sum system).
             final percentage = (amount / _totalExpenditure) * 100;
             final color = _getMemberColor(index);
 
@@ -595,22 +552,42 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
                     // Avatar
                     CircleAvatar(
                       radius: 24,
-                      backgroundColor: photoUrl != null
-                          ? null
+                      backgroundColor: memberEntry.key == 'guests_aggregate'
+                          ? Colors.orange.withValues(alpha: 0.1)
+                          : photoUrl != null
+                          ? Colors.transparent
                           : color.withValues(alpha: 0.1),
-                      backgroundImage: photoUrl != null
-                          ? NetworkImage(photoUrl)
-                          : null,
-                      child: photoUrl == null
-                          ? Text(
+                      child: memberEntry.key == 'guests_aggregate'
+                          ? const Icon(Icons.people, color: Colors.orange)
+                          : photoUrl != null
+                          ? ClipOval(
+                              child: SafeWebImage(
+                                photoUrl,
+                                width: 48,
+                                height: 48,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Center(
+                                    child: Text(
+                                      memberName.substring(0, 1).toUpperCase(),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                        color: color,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            )
+                          : Text(
                               memberName.substring(0, 1).toUpperCase(),
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
                                 color: color,
                               ),
-                            )
-                          : null,
+                            ),
                     ),
                     const SizedBox(width: 12),
 
@@ -633,7 +610,9 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(4),
                                   child: LinearProgressIndicator(
-                                    value: percentage / 100,
+                                    value: percentage / 100 > 1.0
+                                        ? 1.0
+                                        : percentage / 100,
                                     backgroundColor: Colors.grey.withValues(
                                       alpha: 0.2,
                                     ),
@@ -681,9 +660,9 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
                               color: Colors.amber,
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Text(
-                              'Top Spender',
-                              style: TextStyle(
+                            child: Text(
+                              _showBySpender ? 'Top Spender' : 'Top Consumer',
+                              style: const TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,

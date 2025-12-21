@@ -54,6 +54,10 @@ class ChatMessage {
   final String? replyToSenderId; // Sender of the replied message
   final String? replyToSenderName; // Name of sender of replied message
 
+  // Visibility
+  final List<String> hiddenBy; // List of UIDs who deleted this for themselves
+  final List<String> readBy;
+
   ChatMessage({
     required this.id,
     required this.roomId,
@@ -80,6 +84,8 @@ class ChatMessage {
     this.replyToText,
     this.replyToSenderId,
     this.replyToSenderName,
+    this.hiddenBy = const [],
+    this.readBy = const [],
   });
 
   factory ChatMessage.fromDoc(String id, Map<String, dynamic> data) {
@@ -141,6 +147,8 @@ class ChatMessage {
       replyToText: data['replyToText'] as String?,
       replyToSenderId: data['replyToSenderId'] as String?,
       replyToSenderName: data['replyToSenderName'] as String?,
+      hiddenBy: List<String>.from(data['hiddenBy'] ?? []),
+      readBy: List<String>.from(data['readBy'] ?? []),
     );
   }
 }

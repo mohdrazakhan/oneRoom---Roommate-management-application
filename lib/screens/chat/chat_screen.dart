@@ -17,6 +17,14 @@ import '../../services/firestore_service.dart';
 import '../expenses/expense_detail_screen.dart';
 import '../tasks/category_tasks_screen.dart';
 
+import 'package:record/record.dart'; // record package
+import '../../widgets/safe_web_image.dart';
+import '../../widgets/read_by_list.dart';
+import '../../widgets/audio_player_widget.dart';
+
+import 'package:path_provider/path_provider.dart';
+import '../../widgets/video_player_screen.dart';
+
 class ChatScreen extends StatefulWidget {
   final String roomId;
   final String roomName;
@@ -27,20 +35,40 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final _chat = ChatService();
-  final _firestore = FirestoreService();
-  final _controller = TextEditingController();
-  final _scrollController = ScrollController();
+  final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  late ChatService _chat;
+  late FirestoreService _firestore;
+  late final AudioRecorder _audioRecorder;
+
   bool _sending = false;
+  bool _isRecording = false;
 
   // Reply state
   ChatMessage? _replyingTo;
   String? _replyingToSenderName;
 
+  // Selection state
+  final Set<ChatMessage> _selectedMessages = {};
+
+  // Optimistic Read State
+  final Set<String> _locallyReadIds = {};
+
+  bool get _isSelectionMode => _selectedMessages.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _chat = ChatService();
+    _firestore = FirestoreService();
+    _audioRecorder = AudioRecorder();
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
+    _audioRecorder.dispose();
     super.dispose();
   }
 
@@ -58,11 +86,24 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _toggleSelection(ChatMessage message) {
+    setState(() {
+      if (_selectedMessages.any((m) => m.id == message.id)) {
+        _selectedMessages.removeWhere((m) => m.id == message.id);
+      } else {
+        _selectedMessages.add(message);
+      }
+    });
+  }
+
+  void _clearSelection() {
+    setState(() => _selectedMessages.clear());
+  }
+
   Future<void> _sendText() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
-    // Clear immediately for better UX
     _controller.clear();
     final replyTo = _replyingTo;
     final replyToSenderName = _replyingToSenderName;
@@ -81,7 +122,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToTop();
     } catch (e) {
       if (!mounted) return;
-      // Restore text if send failed
       _controller.text = text;
       ScaffoldMessenger.of(
         context,
@@ -89,6 +129,336 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  PreferredSizeWidget _buildAppBar(BuildContext context, String myUid) {
+    if (!_isSelectionMode) {
+      return AppBar(title: Text('Chat • ${widget.roomName}'));
+    }
+
+    final count = _selectedMessages.length;
+    final singleMsg = count == 1 ? _selectedMessages.first : null;
+    final isMe = singleMsg?.senderId == myUid;
+    final isText = singleMsg?.type == ChatMessageType.text;
+
+    return AppBar(
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _clearSelection,
+      ),
+      title: Text('$count'),
+      actions: [
+        if (count == 1) ...[
+          IconButton(
+            icon: const Icon(Icons.reply_rounded),
+            onPressed: () {
+              final m = singleMsg!;
+              _setReplyTo(m, '...');
+              _clearSelection();
+            },
+          ),
+          if (isMe && isText)
+            IconButton(
+              icon: const Icon(Icons.edit_rounded),
+              onPressed: () {
+                _clearSelection();
+                _editMessage(context, singleMsg!);
+              },
+            ),
+          if (isText)
+            IconButton(
+              icon: const Icon(Icons.copy_rounded),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: singleMsg!.text ?? ''));
+                _clearSelection();
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('Copied')));
+              },
+            ),
+          IconButton(
+            icon: const Icon(Icons.info_outline_rounded),
+            onPressed: () => _showMsgInfo(context, singleMsg!),
+          ),
+        ],
+        IconButton(
+          icon: const Icon(Icons.delete_rounded),
+          onPressed: () => _handleDeleteSelection(context, myUid),
+        ),
+      ],
+    );
+  }
+
+  void _handleDeleteSelection(BuildContext context, String myUid) {
+    if (_selectedMessages.length == 1) {
+      final m = _selectedMessages.first;
+      if (m.senderId == myUid) {
+        showModalBottomSheet(
+          context: context,
+          builder: (ctx) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(
+                    Icons.delete_forever_rounded,
+                    color: Colors.red,
+                  ),
+                  title: const Text(
+                    'Delete for Everyone',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _deleteMessage(context, forEveryone: true, message: m);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_rounded),
+                  title: const Text('Delete for Me'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _deleteMessage(context, forEveryone: false, message: m);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.close),
+                  title: const Text('Cancel'),
+                  onTap: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        _deleteMessage(context, forEveryone: false, message: m);
+      }
+    } else {
+      _batchDeleteForMe(context);
+    }
+  }
+
+  void _batchDeleteForMe(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete selected messages?'),
+        content: const Text('These messages will be hidden from you.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    for (final m in _selectedMessages) {
+      ChatService().deleteMessageForMe(roomId: m.roomId, messageId: m.id);
+    }
+    _clearSelection();
+  }
+
+  void _editMessage(BuildContext context, ChatMessage message) async {
+    final controller = TextEditingController(text: message.text);
+    final newText = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Message'),
+        content: TextField(
+          controller: controller,
+          maxLines: 5,
+          minLines: 1,
+          decoration: const InputDecoration(
+            hintText: 'Enter new message',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newText == null || newText.trim().isEmpty || !context.mounted) return;
+
+    try {
+      await ChatService().editMessage(
+        roomId: message.roomId,
+        messageId: message.id,
+        newText: newText.trim(),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to edit: $e')));
+      }
+    }
+  }
+
+  void _deleteMessage(
+    BuildContext context, {
+    required bool forEveryone,
+    required ChatMessage message,
+  }) async {
+    try {
+      if (forEveryone) {
+        await ChatService().deleteMessage(
+          roomId: message.roomId,
+          messageId: message.id,
+        );
+      } else {
+        await ChatService().deleteMessageForMe(
+          roomId: message.roomId,
+          messageId: message.id,
+        );
+      }
+      _clearSelection();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
+      }
+    }
+  }
+
+  void _showMsgInfo(BuildContext context, ChatMessage message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Message Info'),
+        content: StreamBuilder<ChatMessage>(
+          stream: ChatService().streamSingleMessage(message.roomId, message.id),
+          initialData: message,
+          builder: (context, snapshot) {
+            final m = snapshot.data ?? message;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Sent: ${m.createdAt}'),
+                const SizedBox(height: 8),
+                ReadByList(userIds: m.readBy),
+              ],
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final myUid = auth.firebaseUser?.uid ?? '';
+    return PopScope(
+      canPop: !_isSelectionMode,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _clearSelection();
+      },
+      child: Scaffold(
+        appBar: _buildAppBar(context, myUid),
+        body: Column(
+          children: [
+            Expanded(
+              child: StreamBuilder<List<ChatMessage>>(
+                stream: ChatService().streamMessages(widget.roomId),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final messages = (snapshot.data ?? [])
+                      .where((m) => !m.hiddenBy.contains(myUid))
+                      .toList();
+                  if (messages.isEmpty) {
+                    return _buildEmpty(context);
+                  }
+                  return ListView.builder(
+                    controller: _scrollController,
+                    reverse: true, // newest at top
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                    itemCount: messages.length,
+                    itemBuilder: (context, i) {
+                      final m = messages[i];
+                      final isMe = m.senderId == myUid;
+                      final isSelected = _selectedMessages.any(
+                        (x) => x.id == m.id,
+                      );
+                      return _ChatMessageTile(
+                        message: m,
+                        isMe: isMe,
+                        isSelected: isSelected,
+                        selectionMode: _isSelectionMode,
+                        onBind: (msg) {
+                          if (!isMe &&
+                              !msg.readBy.contains(myUid) &&
+                              !_locallyReadIds.contains(msg.id)) {
+                            _locallyReadIds.add(msg.id);
+                            ChatService().markMessageAsRead(
+                              widget.roomId,
+                              msg.id,
+                            );
+                          }
+                        },
+                        onToggleSelection: () => _toggleSelection(m),
+                        onVote: (idx) => _chat.votePoll(
+                          roomId: widget.roomId,
+                          messageId: m.id,
+                          optionIndex: idx,
+                        ),
+                        onOpenLink: (type, id) => _handleOpenLink(type, id),
+                        onReply: (msg, senderName) =>
+                            _setReplyTo(msg, senderName),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            const Divider(height: 1),
+            if (_replyingTo != null)
+              _ReplyPreviewBar(
+                replyingToName: _replyingToSenderName ?? 'Unknown',
+                replyingToText:
+                    _replyingTo!.text ?? _getMessagePreview(_replyingTo),
+                onCancel: _cancelReply,
+              ),
+            _Composer(
+              controller: _controller,
+              onSend: _sendText,
+              sending: _sending,
+              isRecording: _isRecording,
+              onCamera: _pickFromCamera,
+              onMic: _toggleRecording,
+              onGallery: _pickGallery,
+              onMore: _showMoreActions,
+              onSticker: _showStickerPicker,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _getMessagePreview(ChatMessage? message) {
@@ -123,84 +493,134 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickFromCamera() async {
     final picker = ImagePicker();
+    // Camera implies Image for now. User said "camera so user capture image directly".
+    // "add image are send in medium quality".
     final x = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
+      source: ImageSource.camera,
+      imageQuality: 50,
+      maxWidth: 1024,
     );
     if (x == null) return;
-    setState(() => _sending = true);
+    _sendMediaFile(File(x.path), 'image');
+  }
+
+  Future<void> _toggleRecording() async {
     try {
-      final file = File(x.path);
-      await _chat.sendMedia(
-        roomId: widget.roomId,
-        file: file,
-        ext: _extFromPath(x.path),
-        contentType: 'image/${_extFromPath(x.path)}',
-        kind: 'image',
-        replyToId: _replyingTo?.id,
-        replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
-        replyToSenderId: _replyingTo?.senderId,
-        replyToSenderName: _replyingToSenderName,
-      );
-      _cancelReply();
+      if (_isRecording) {
+        final path = await _audioRecorder.stop();
+        setState(() => _isRecording = false);
+        if (path != null) {
+          _sendMediaFile(File(path), 'audio');
+        }
+      } else {
+        if (await _audioRecorder.hasPermission()) {
+          final tempDir = await getTemporaryDirectory();
+          final path =
+              '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+
+          // Optimize for voice: AAC Low Complexity, 32kbps, 16kHz sample rate
+          // This drastically reduces file size (~1MB/min -> ~0.2MB/min) making uploads much faster.
+          const config = RecordConfig(
+            encoder: AudioEncoder.aacLc,
+            bitRate: 32000,
+            sampleRate: 16000,
+          );
+
+          await _audioRecorder.start(config, path: path);
+          setState(() => _isRecording = true);
+        } else {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission required')),
+          );
+        }
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to send image: $e')));
-    } finally {
-      if (mounted) setState(() => _sending = false);
+      debugPrint('Recording error: $e');
+      setState(() => _isRecording = false);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error recording: $e')));
+      }
     }
   }
 
-  Future<void> _pickVideo() async {
-    final picker = ImagePicker();
-    final x = await picker.pickVideo(source: ImageSource.gallery);
-    if (x == null) return;
-    setState(() => _sending = true);
-    try {
-      final file = File(x.path);
-      final ext = _extFromPath(x.path);
-      final mime = ext == 'mov' ? 'video/quicktime' : 'video/$ext';
-      await _chat.sendMedia(
-        roomId: widget.roomId,
-        file: file,
-        ext: ext,
-        contentType: mime,
-        kind: 'video',
-        replyToId: _replyingTo?.id,
-        replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
-        replyToSenderId: _replyingTo?.senderId,
-        replyToSenderName: _replyingToSenderName,
-      );
-      _cancelReply();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to send video: $e')));
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+  Future<void> _pickGallery() async {
+    // Show choice: Photos/Video OR Audio File
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: const Text('Photos & Videos'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final picker = ImagePicker();
+                try {
+                  final x = await picker.pickMedia(
+                    imageQuality: 50,
+                    maxWidth: 1024,
+                  );
+                  if (x == null) return;
+                  final ext = _extFromPath(x.path).toLowerCase();
+                  final isVideo = ['mp4', 'mov', 'avi', 'mkv'].contains(ext);
+                  _sendMediaFile(File(x.path), isVideo ? 'video' : 'image');
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.audiotrack_rounded),
+              title: const Text('Audio File via File Manager'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAudioFile();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('Cancel'),
+              onTap: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Future<void> _pickAudio() async {
+  Future<void> _pickAudioFile() async {
     final res = await FilePicker.platform.pickFiles(type: FileType.audio);
     if (res == null || res.files.single.path == null) return;
-    final path = res.files.single.path!;
+    _sendMediaFile(File(res.files.single.path!), 'audio');
+  }
+
+  Future<void> _sendMediaFile(File file, String kind) async {
     setState(() => _sending = true);
     try {
-      final file = File(path);
-      final ext = _extFromPath(path);
-      final mime = 'audio/$ext';
+      final ext = _extFromPath(file.path);
+      String mime;
+      if (kind == 'video') {
+        mime = ext == 'mov' ? 'video/quicktime' : 'video/$ext';
+      } else {
+        mime = 'image/$ext';
+      }
+
       await _chat.sendMedia(
         roomId: widget.roomId,
         file: file,
         ext: ext,
         contentType: mime,
-        kind: 'audio',
+        kind: kind,
         replyToId: _replyingTo?.id,
         replyToText: _replyingTo?.text ?? _getMessagePreview(_replyingTo),
         replyToSenderId: _replyingTo?.senderId,
@@ -211,7 +631,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to send audio: $e')));
+      ).showSnackBar(SnackBar(content: Text('Failed to send $kind: $e')));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -257,74 +677,6 @@ class _ChatScreenState extends State<ChatScreen> {
   String _extFromPath(String path) {
     final idx = path.lastIndexOf('.');
     return idx == -1 ? 'bin' : path.substring(idx + 1).toLowerCase();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final myUid = auth.firebaseUser?.uid ?? '';
-    return Scaffold(
-      appBar: AppBar(title: Text('Chat • ${widget.roomName}')),
-      body: Column(
-        children: [
-          Expanded(
-            child: StreamBuilder<List<ChatMessage>>(
-              stream: ChatService().streamMessages(widget.roomId),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final messages = snapshot.data ?? const [];
-                if (messages.isEmpty) {
-                  return _buildEmpty(context);
-                }
-                return ListView.builder(
-                  controller: _scrollController,
-                  reverse: true, // newest at top
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  itemCount: messages.length,
-                  itemBuilder: (context, i) {
-                    final m = messages[i];
-                    final isMe = m.senderId == myUid;
-                    return _ChatMessageTile(
-                      message: m,
-                      isMe: isMe,
-                      onVote: (idx) => _chat.votePoll(
-                        roomId: widget.roomId,
-                        messageId: m.id,
-                        optionIndex: idx,
-                      ),
-                      onOpenLink: (type, id) => _handleOpenLink(type, id),
-                      onReply: (msg, senderName) =>
-                          _setReplyTo(msg, senderName),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          const Divider(height: 1),
-          // Reply preview bar
-          if (_replyingTo != null)
-            _ReplyPreviewBar(
-              replyingToName: _replyingToSenderName ?? 'Unknown',
-              replyingToText:
-                  _replyingTo!.text ?? _getMessagePreview(_replyingTo),
-              onCancel: _cancelReply,
-            ),
-          _Composer(
-            controller: _controller,
-            onSend: _sendText,
-            sending: _sending,
-            onPickImage: _pickImage,
-            onPickVideo: _pickVideo,
-            onPickAudio: _pickAudio,
-            onMore: _showMoreActions,
-            onSticker: _showStickerPicker,
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildEmpty(BuildContext context) {
@@ -753,22 +1105,24 @@ class _ChatScreenState extends State<ChatScreen> {
 class _Composer extends StatelessWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
-  final VoidCallback onPickImage;
-  final VoidCallback onPickVideo;
-  final VoidCallback onPickAudio;
+  final VoidCallback onCamera;
+  final VoidCallback onMic;
+  final VoidCallback onGallery;
   final VoidCallback onMore;
   final VoidCallback onSticker;
   final bool sending;
+  final bool isRecording;
 
   const _Composer({
     required this.controller,
     required this.onSend,
-    required this.onPickImage,
-    required this.onPickVideo,
-    required this.onPickAudio,
+    required this.onCamera,
+    required this.onMic,
+    required this.onGallery,
     required this.onMore,
     required this.onSticker,
     required this.sending,
+    this.isRecording = false,
   });
 
   @override
@@ -778,30 +1132,43 @@ class _Composer extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           children: [
-            // Single Attachment Button with Menu
+            // Main Attachment Menu
             IconButton(
-              icon: const Icon(Icons.attach_file_rounded),
-              onPressed: sending ? null : () => _showAttachmentMenu(context),
+              icon: const Icon(Icons.add_circle_outline_rounded),
+              onPressed: sending || isRecording
+                  ? null
+                  : () => _showAttachmentMenu(context),
               tooltip: 'Attach',
             ),
-            // Sticker button
-            IconButton(
-              icon: const Icon(Icons.emoji_emotions_outlined),
-              onPressed: sending ? null : onSticker,
-              tooltip: 'Stickers',
-            ),
+            // Direct Camera and Mic removed (moved to menu).
+            // Only show Stop button if recording.
+            if (isRecording)
+              IconButton(
+                icon: const Icon(Icons.stop_circle_rounded, color: Colors.red),
+                onPressed: onMic,
+                tooltip: 'Stop Recording',
+              ),
             Expanded(
               child: TextField(
                 controller: controller,
                 minLines: 1,
                 maxLines: 5,
                 textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(hintText: 'Message'),
+                enabled: !isRecording,
+                decoration: InputDecoration(
+                  hintText: isRecording ? 'Recording audio...' : 'Message',
+                  suffixIcon: isRecording
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.emoji_emotions_outlined),
+                          onPressed: sending ? null : onSticker,
+                        ),
+                ),
               ),
             ),
             const SizedBox(width: 6),
             IconButton.filled(
-              onPressed: sending ? null : onSend,
+              onPressed: sending || isRecording ? null : onSend,
               icon: const Icon(Icons.send_rounded),
             ),
           ],
@@ -823,36 +1190,31 @@ class _Composer extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: Icon(
-                  Icons.image_rounded,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                title: const Text('Image'),
+                leading: const Icon(Icons.camera_alt_rounded),
+                title: const Text('Camera'),
                 onTap: () {
                   Navigator.pop(context);
-                  onPickImage();
+                  onCamera();
                 },
               ),
               ListTile(
-                leading: Icon(
-                  Icons.videocam_rounded,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                title: const Text('Video'),
+                leading: const Icon(Icons.mic_rounded),
+                title: const Text('Record Audio'),
                 onTap: () {
                   Navigator.pop(context);
-                  onPickVideo();
+                  onMic();
                 },
               ),
+              const Divider(),
               ListTile(
                 leading: Icon(
-                  Icons.audiotrack_rounded,
+                  Icons.perm_media_rounded,
                   color: Theme.of(context).colorScheme.primary,
                 ),
-                title: const Text('Audio'),
+                title: const Text('Media (Photo, Video, Audio)'),
                 onTap: () {
                   Navigator.pop(context);
-                  onPickAudio();
+                  onGallery();
                 },
               ),
               const Divider(),
@@ -861,7 +1223,7 @@ class _Composer extends StatelessWidget {
                   Icons.poll_rounded,
                   color: Theme.of(context).colorScheme.secondary,
                 ),
-                title: const Text('More Options'),
+                title: const Text('Poll / More'),
                 onTap: () {
                   Navigator.pop(context);
                   onMore();
@@ -875,80 +1237,202 @@ class _Composer extends StatelessWidget {
   }
 }
 
-class _ChatMessageTile extends StatelessWidget {
+class _ChatMessageTile extends StatefulWidget {
   final ChatMessage message;
   final bool isMe;
+  final bool isSelected;
+  final bool selectionMode;
   final void Function(int optionIndex)? onVote;
   final void Function(String type, String id)? onOpenLink;
   final void Function(ChatMessage message, String senderName)? onReply;
+  final VoidCallback? onToggleSelection;
+  final Function(ChatMessage message)? onBind;
 
   const _ChatMessageTile({
     required this.message,
     required this.isMe,
+    required this.isSelected,
+    required this.selectionMode,
     this.onVote,
     this.onOpenLink,
     this.onReply,
+    this.onToggleSelection,
+    this.onBind,
   });
 
   @override
+  State<_ChatMessageTile> createState() => _ChatMessageTileState();
+}
+
+class _ChatMessageTileState extends State<_ChatMessageTile> {
+  late Future<Map<String, dynamic>?> _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileFuture = FirestoreService().getUserProfile(widget.message.senderId);
+  }
+
+  @override
+  void didUpdateWidget(_ChatMessageTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.message.senderId != oldWidget.message.senderId) {
+      _profileFuture = FirestoreService().getUserProfile(
+        widget.message.senderId,
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Local references for cleaner code
+    final message = widget.message;
+    final isMe = widget.isMe;
+    final isSelected = widget.isSelected;
+    final selectionMode = widget.selectionMode;
+    final onToggleSelection = widget.onToggleSelection;
+    final onReply = widget.onReply;
+    final onVote = widget.onVote;
+    final onOpenLink = widget.onOpenLink;
+
+    if (widget.onBind != null) {
+      // Defer state update to avoid build cycle
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onBind!(message);
+      });
+    }
+
+    // Mark as read if not sent by me and not already read by me
+    if (!isMe) {
+      final myUid = Provider.of<AuthProvider>(
+        context,
+        listen: false,
+      ).firebaseUser?.uid;
+      if (myUid != null && !message.readBy.contains(myUid)) {
+        // Avoid frequent writes: only if not in list.
+        // Also consider debouncing or simple fire-and-forget.
+        ChatService().markMessageAsRead(message.roomId, message.id);
+      }
+    }
+
     return FutureBuilder<Map<String, dynamic>?>(
-      future: FirestoreService().getUserProfile(message.senderId),
+      future: _profileFuture,
       builder: (context, snapshot) {
         final senderName =
             snapshot.data?['displayName'] as String? ?? 'Unknown';
         final senderPhoto = snapshot.data?['photoURL'] as String?;
 
-        return Align(
-          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-          child: Column(
-            crossAxisAlignment: isMe
-                ? CrossAxisAlignment.end
-                : CrossAxisAlignment.start,
-            children: [
-              // Show sender info for messages from others
-              if (!isMe)
-                Padding(
-                  padding: const EdgeInsets.only(left: 12, bottom: 4, top: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (senderPhoto != null && senderPhoto.isNotEmpty)
-                        CircleAvatar(
-                          radius: 10,
-                          backgroundImage: NetworkImage(senderPhoto),
-                        )
-                      else
-                        CircleAvatar(
-                          radius: 10,
-                          child: Text(
-                            senderName.isNotEmpty
-                                ? senderName[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(fontSize: 10),
+        return InkWell(
+          onTap: selectionMode ? onToggleSelection : null,
+          onLongPress: onToggleSelection,
+          child: Container(
+            color: isSelected
+                ? Theme.of(
+                    context,
+                  ).colorScheme.primaryContainer.withValues(alpha: 0.3)
+                : null,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            child: Align(
+              alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+              child: Column(
+                crossAxisAlignment: isMe
+                    ? CrossAxisAlignment.end
+                    : CrossAxisAlignment.start,
+                children: [
+                  // Show sender info for messages from others
+                  if (!isMe)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4, top: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircleAvatar(
+                            radius: 10,
+                            backgroundColor: Colors.grey[300],
+                            child:
+                                (senderPhoto != null && senderPhoto.isNotEmpty)
+                                ? ClipOval(
+                                    child: SafeWebImage(
+                                      senderPhoto,
+                                      width: 20,
+                                      height: 20,
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) {
+                                            return Text(
+                                              senderName.isNotEmpty
+                                                  ? senderName[0].toUpperCase()
+                                                  : '?',
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                              ),
+                                            );
+                                          },
+                                    ),
+                                  )
+                                : Text(
+                                    senderName.isNotEmpty
+                                        ? senderName[0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(fontSize: 10),
+                                  ),
                           ),
-                        ),
-                      const SizedBox(width: 6),
-                      Text(
-                        senderName,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                          const SizedBox(width: 6),
+                          Text(
+                            senderName,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
+                  Dismissible(
+                    key: Key('reply_${message.id}'),
+                    direction: selectionMode
+                        ? DismissDirection.none
+                        : DismissDirection.horizontal,
+                    confirmDismiss: (direction) async {
+                      if (onReply != null) {
+                        onReply(message, senderName);
+                        HapticFeedback.lightImpact();
+                      }
+                      return false;
+                    },
+                    background: Container(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.only(left: 20),
+                      child: Icon(
+                        Icons.reply_rounded,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    secondaryBackground: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      child: Icon(
+                        Icons.reply_rounded,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    child: AbsorbPointer(
+                      absorbing: selectionMode,
+                      child: _MessageBubble(
+                        message: message,
+                        isMe: isMe,
+                        senderName: senderName,
+                        onVote: onVote,
+                        onOpenLink: onOpenLink,
+                      ),
+                    ),
                   ),
-                ),
-              _MessageBubble(
-                message: message,
-                isMe: isMe,
-                senderName: senderName,
-                onVote: onVote,
-                onOpenLink: onOpenLink,
-                onReply: onReply,
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
@@ -962,7 +1446,6 @@ class _MessageBubble extends StatelessWidget {
   final String senderName;
   final void Function(int optionIndex)? onVote;
   final void Function(String type, String id)? onOpenLink;
-  final void Function(ChatMessage message, String senderName)? onReply;
 
   const _MessageBubble({
     required this.message,
@@ -970,163 +1453,7 @@ class _MessageBubble extends StatelessWidget {
     required this.senderName,
     this.onVote,
     this.onOpenLink,
-    this.onReply,
   });
-
-  void _showMessageOptions(BuildContext context) async {
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Reply option for all messages
-              ListTile(
-                leading: const Icon(Icons.reply),
-                title: const Text('Reply'),
-                onTap: () => Navigator.pop(context, 'reply'),
-              ),
-              if (message.type == ChatMessageType.text && isMe)
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('Edit Message'),
-                  onTap: () => Navigator.pop(context, 'edit'),
-                ),
-              if (isMe)
-                ListTile(
-                  leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text(
-                    'Delete Message',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                  onTap: () => Navigator.pop(context, 'delete'),
-                ),
-              if (message.type == ChatMessageType.text)
-                ListTile(
-                  leading: const Icon(Icons.copy),
-                  title: const Text('Copy Text'),
-                  onTap: () => Navigator.pop(context, 'copy'),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (choice == null) return;
-
-    if (choice == 'reply') {
-      // Call reply immediately - don't check context.mounted as it may cause issues
-      onReply?.call(message, senderName);
-    } else if (choice == 'edit') {
-      if (context.mounted) _editMessage(context);
-    } else if (choice == 'delete') {
-      if (context.mounted) _deleteMessage(context);
-    } else if (choice == 'copy') {
-      final text = message.text ?? '';
-      if (text.isNotEmpty) {
-        Clipboard.setData(ClipboardData(text: text));
-        if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Text copied')));
-        }
-      }
-    }
-  }
-
-  void _editMessage(BuildContext context) async {
-    final controller = TextEditingController(text: message.text);
-
-    final newText = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Edit Message'),
-          content: TextField(
-            controller: controller,
-            maxLines: 5,
-            minLines: 1,
-            decoration: const InputDecoration(
-              hintText: 'Enter new message',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(context, controller.text);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (newText == null || newText.trim().isEmpty || !context.mounted) return;
-
-    try {
-      // Get roomId from message
-      await ChatService().editMessage(
-        roomId: message.roomId,
-        messageId: message.id,
-        newText: newText.trim(),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to edit: $e')));
-      }
-    }
-  }
-
-  void _deleteMessage(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Delete Message'),
-          content: const Text('Are you sure you want to delete this message?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true || !context.mounted) return;
-
-    try {
-      await ChatService().deleteMessage(
-        roomId: message.roomId,
-        messageId: message.id,
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1135,32 +1462,28 @@ class _MessageBubble extends StatelessWidget {
         : Theme.of(context).colorScheme.surfaceContainerHighest;
     final fg = isMe ? Colors.white : Theme.of(context).colorScheme.onSurface;
 
-    // Show deleted message placeholder
     if (message.deleted) {
-      return Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.grey.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.block, size: 16, color: Colors.grey[600]),
-              const SizedBox(width: 8),
-              Text(
-                'This message was deleted',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontStyle: FontStyle.italic,
-                ),
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.block, size: 16, color: Colors.grey[600]),
+            const SizedBox(width: 8),
+            Text(
+              'This message was deleted',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontStyle: FontStyle.italic,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
@@ -1199,62 +1522,101 @@ class _MessageBubble extends StatelessWidget {
         );
         break;
       case ChatMessageType.image:
-        child = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if ((message.text ?? '').isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Text(message.text!, style: TextStyle(color: fg)),
-              ),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                message.mediaUrl ?? '',
-                fit: BoxFit.cover,
-                width: 240,
-                height: 180,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return SizedBox(
-                    width: 240,
-                    height: 180,
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        value: loadingProgress.expectedTotalBytes != null
-                            ? loadingProgress.cumulativeBytesLoaded /
-                                  loadingProgress.expectedTotalBytes!
-                            : null,
+        final url = message.mediaUrl ?? '';
+        if (url.isEmpty) {
+          child = Container(
+            width: 240,
+            height: 180,
+            color: Colors.grey[300],
+            child: const Icon(Icons.broken_image),
+          );
+        } else {
+          child = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if ((message.text ?? '').isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Text(message.text!, style: TextStyle(color: fg)),
+                ),
+              GestureDetector(
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (ctx) => Scaffold(
+                        backgroundColor: Colors.black,
+                        appBar: AppBar(
+                          backgroundColor: Colors.black,
+                          iconTheme: const IconThemeData(color: Colors.white),
+                        ),
+                        body: Center(
+                          child: InteractiveViewer(
+                            child: SafeWebImage(
+                              url,
+                              fit: BoxFit.contain,
+                              width: double.infinity,
+                              height: double.infinity,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   );
                 },
-                errorBuilder: (context, error, stackTrace) => Container(
-                  width: 240,
-                  height: 180,
-                  color: Colors.grey[300],
-                  child: const Icon(Icons.broken_image, size: 48),
+                child: Hero(
+                  tag: 'chat_image_${message.id}',
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SafeWebImage(
+                      url,
+                      fit: BoxFit.cover,
+                      width: 240,
+                      height: 180,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return SizedBox(
+                          width: 240,
+                          height: 180,
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                  : null,
+                            ),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        width: 240,
+                        height: 180,
+                        color: Colors.grey[300],
+                        child: const Icon(Icons.broken_image, size: 48),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ],
-        );
+            ],
+          );
+        }
         break;
       case ChatMessageType.video:
-        child = _MediaTile(
-          icon: Icons.videocam_rounded,
-          label: 'Video',
-          url: message.mediaUrl ?? '',
-          color: fg,
-        );
+        final url = message.mediaUrl ?? '';
+        child = url.isEmpty
+            ? const Text('[Invalid Video]', style: TextStyle(color: Colors.red))
+            : _MediaTile(
+                icon: Icons.videocam_rounded,
+                label: 'Video',
+                url: url,
+                color: fg,
+              );
         break;
       case ChatMessageType.audio:
-        child = _MediaTile(
-          icon: Icons.audiotrack_rounded,
-          label: 'Audio',
-          url: message.mediaUrl ?? '',
-          color: fg,
-        );
+        final url = message.mediaUrl ?? '';
+        child = url.isEmpty
+            ? const Text('[Invalid Audio]', style: TextStyle(color: Colors.red))
+            : AudioPlayerWidget(url: url, isMe: isMe, color: fg);
         break;
       case ChatMessageType.poll:
         child = _PollTile(message: message, color: fg, onVote: onVote);
@@ -1277,7 +1639,7 @@ class _MessageBubble extends StatelessWidget {
         break;
     }
 
-    // Build reply preview if this message is a reply
+    // Build reply preview
     Widget? replyPreview;
     if (message.replyToId != null && message.replyToId!.isNotEmpty) {
       replyPreview = Container(
@@ -1313,33 +1675,26 @@ class _MessageBubble extends StatelessWidget {
       );
     }
 
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () => _showMessageOptions(context),
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.all(12),
-          constraints: BoxConstraints(
-            // Cap bubble width so long text wraps within screen
-            maxWidth: MediaQuery.of(context).size.width * 0.8,
-          ),
-          decoration: BoxDecoration(
-            color: message.type == ChatMessageType.sticker
-                ? Colors.transparent
-                : bg,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(isMe ? 16 : 4),
-              bottomRight: Radius.circular(isMe ? 4 : 16),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [if (replyPreview != null) replyPreview, child],
-          ),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(12),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.8,
+      ),
+      decoration: BoxDecoration(
+        color: message.type == ChatMessageType.sticker
+            ? Colors.transparent
+            : bg,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: Radius.circular(isMe ? 16 : 4),
+          bottomRight: Radius.circular(isMe ? 4 : 16),
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [if (replyPreview != null) replyPreview, child],
       ),
     );
   }
@@ -1361,8 +1716,16 @@ class _MediaTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: () async {
-        final uri = Uri.parse(url);
-        if (await canLaunchUrl(uri)) await launchUrl(uri);
+        if (label == 'Video') {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (ctx) => VideoPlayerScreen(videoUrl: url),
+            ),
+          );
+        } else {
+          final uri = Uri.parse(url);
+          if (await canLaunchUrl(uri)) await launchUrl(uri);
+        }
       },
       child: Row(
         mainAxisSize: MainAxisSize.min,

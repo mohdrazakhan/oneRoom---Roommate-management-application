@@ -10,16 +10,20 @@ class ExpenseCard extends StatelessWidget {
   final String? currentUserUid;
   final VoidCallback? onTap;
   final VoidCallback? onDelete;
+  final String roomId; // Required for resolving guest names
+  final ExpenseCategory? customCategory;
 
   static final Map<String, String> _nameCache = {};
 
   const ExpenseCard({
     super.key,
     required this.expense,
+    required this.roomId,
     this.highlightIfPaidByMe = false,
     this.currentUserUid,
     this.onTap,
     this.onDelete,
+    this.customCategory,
   });
 
   @override
@@ -30,7 +34,8 @@ class ExpenseCard extends StatelessWidget {
     final amountText = Formatters.formatCurrency(expense.amount);
 
     final paidByMe = currentUserUid != null && currentUserUid == paidByUid;
-    final category = ExpenseCategory.getCategory(expense.category);
+    final category =
+        customCategory ?? ExpenseCategory.getCategory(expense.category);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -123,7 +128,7 @@ class ExpenseCard extends StatelessWidget {
                                       fontWeight: FontWeight.w600,
                                     ),
                                   )
-                                : _PaidByName(uid: paidByUid),
+                                : _PaidByName(uid: paidByUid, roomId: roomId),
                           ),
                         ],
                       ),
@@ -233,10 +238,8 @@ class ExpenseCard extends StatelessWidget {
       badgeColor = Colors.orange;
       badgeIcon = Icons.timelapse;
     } else {
-      // Pending
-      badgeText = 'Pending';
-      badgeColor = Colors.grey;
-      badgeIcon = Icons.schedule;
+      // Pending - User requested to hide this
+      return const SizedBox.shrink();
     }
 
     return Container(
@@ -266,8 +269,9 @@ class ExpenseCard extends StatelessWidget {
 }
 
 class _PaidByName extends StatefulWidget {
+  final String roomId;
   final String uid;
-  const _PaidByName({required this.uid});
+  const _PaidByName({required this.uid, required this.roomId});
 
   @override
   State<_PaidByName> createState() => _PaidByNameState();
@@ -280,17 +284,54 @@ class _PaidByNameState extends State<_PaidByName> {
   @override
   void initState() {
     super.initState();
+    _loadName();
+  }
+
+  Future<void> _loadName() async {
     // Use cache if available
     final cached = ExpenseCard._nameCache[widget.uid];
     if (cached != null) {
-      _name = cached;
-      _loading = false;
+      if (mounted) {
+        setState(() {
+          _name = cached;
+          _loading = false;
+        });
+      }
+      return;
+    }
+
+    if (widget.uid.startsWith('guest_')) {
+      // Fetch from Room
+      try {
+        final fs = FirestoreService();
+        final room = await fs.getRoom(widget.roomId);
+        String? guestName;
+        if (room != null && room['guests'] != null) {
+          final guests = room['guests'] as Map<String, dynamic>;
+          if (guests.containsKey(widget.uid)) {
+            guestName = guests[widget.uid]['name'];
+          }
+        }
+
+        final name = guestName != null ? '$guestName (Guest)' : 'Guest';
+        ExpenseCard._nameCache[widget.uid] = name;
+        if (mounted) {
+          setState(() {
+            _name = name;
+            _loading = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _loading = false);
+      }
     } else {
+      // Fetch User Profile
       FirestoreService().getUserDisplayName(widget.uid).then((value) {
         if (!mounted) return;
+        final name = value ?? _shortUid(widget.uid);
+        ExpenseCard._nameCache[widget.uid] = name;
         setState(() {
-          _name = value ?? _shortUid(widget.uid);
-          ExpenseCard._nameCache[widget.uid] = _name!;
+          _name = name;
           _loading = false;
         });
       });
@@ -304,9 +345,16 @@ class _PaidByNameState extends State<_PaidByName> {
 
   @override
   Widget build(BuildContext context) {
-    final text = _loading
-        ? _shortUid(widget.uid)
-        : (_name ?? _shortUid(widget.uid));
+    if (widget.uid == 'guests_aggregate') {
+      return Text(
+        'Paid by: Guests',
+        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final text = _loading ? 'Loading...' : (_name ?? _shortUid(widget.uid));
     return Text(
       'Paid by: $text',
       style: TextStyle(fontSize: 13, color: Colors.grey[600]),

@@ -220,8 +220,12 @@ class ExpenseCategory {
   }
 
   /// Create a custom category from user input
-  static ExpenseCategory createCustom(String name, String emoji) {
-    return ExpenseCategory(name: name, icon: emoji, colorValue: 0xFF9E9E9E);
+  static ExpenseCategory createCustom(String name, String emoji, {int? color}) {
+    return ExpenseCategory(
+      name: name,
+      icon: emoji,
+      colorValue: color ?? 0xFF9E9E9E,
+    );
   }
 }
 

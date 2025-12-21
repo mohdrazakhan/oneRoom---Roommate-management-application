@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:provider/provider.dart';
+import '../services/subscription_service.dart';
 
 class MyBannerAd extends StatefulWidget {
   const MyBannerAd({super.key});
@@ -25,7 +27,7 @@ class _MyBannerAdState extends State<MyBannerAd> {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          print("Ad failed to load: $error");
+          debugPrint("Ad failed to load: $error");
         },
       ),
       request: const AdRequest(),
@@ -36,13 +38,52 @@ class _MyBannerAdState extends State<MyBannerAd> {
 
   @override
   Widget build(BuildContext context) {
-    return _isLoaded
-        ? SizedBox(
-            width: _bannerAd.size.width.toDouble(),
-            height: _bannerAd.size.height.toDouble(),
-            child: AdWidget(ad: _bannerAd),
-          )
-        : const SizedBox.shrink();
+    // Check Premium Status
+    final subService = context.watch<SubscriptionService>();
+    // Only hide if user has isAdFree (Premium Plus)
+    if (subService.isAdFree) {
+      return const SizedBox.shrink();
+    }
+
+    if (!_isLoaded) return const SizedBox.shrink();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Remove Ads Button
+        Container(
+          width: double.infinity,
+          color: Colors.grey[100],
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+          child: GestureDetector(
+            onTap: () {
+              Navigator.pushNamed(context, '/subscription');
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.block, size: 14, color: Colors.grey[600]),
+                const SizedBox(width: 4),
+                Text(
+                  'Remove Ads',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[800],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // The Ad
+        SizedBox(
+          width: _bannerAd.size.width.toDouble(),
+          height: _bannerAd.size.height.toDouble(),
+          child: AdWidget(ad: _bannerAd),
+        ),
+      ],
+    );
   }
 
   @override

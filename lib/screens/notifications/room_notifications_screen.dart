@@ -336,7 +336,7 @@ class _RoomNotificationsScreenState extends State<RoomNotificationsScreen> {
     bool approve,
   ) async {
     try {
-      await _firestoreService.respondToSwapRequest(
+      await _firestoreService.finalizeSwap(
         roomId: widget.room.id,
         taskInstanceId: taskInstanceId,
         approve: approve,
@@ -384,6 +384,7 @@ class _RoomNotificationsScreenState extends State<RoomNotificationsScreen> {
       case NotificationType.expenseAdded:
       case NotificationType.expenseEdited:
       case NotificationType.expenseDeleted:
+      case NotificationType.paymentRecorded:
         // Navigate back to room (expenses)
         Navigator.pop(context);
         break;
@@ -463,6 +464,8 @@ class _RoomNotificationsScreenState extends State<RoomNotificationsScreen> {
         return Icons.person_add_rounded;
       case NotificationType.memberRemoved:
         return Icons.person_remove_rounded;
+      case NotificationType.paymentRecorded:
+        return Icons.payments_rounded;
       case NotificationType.other:
         return Icons.notifications_rounded;
     }
@@ -492,6 +495,8 @@ class _RoomNotificationsScreenState extends State<RoomNotificationsScreen> {
         return Colors.green;
       case NotificationType.memberRemoved:
         return Colors.orange;
+      case NotificationType.paymentRecorded:
+        return Colors.green;
       case NotificationType.other:
         return Colors.grey;
     }

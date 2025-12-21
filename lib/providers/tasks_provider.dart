@@ -115,6 +115,26 @@ class TasksProvider with ChangeNotifier {
     return snapshot.docs.length;
   }
 
+  Future<int> getTotalTaskCount(String roomId) async {
+    final snapshot = await _firestore
+        .collection('rooms')
+        .doc(roomId)
+        .collection('tasks')
+        .count()
+        .get();
+    return snapshot.count ?? 0;
+  }
+
+  Future<int> getCategoryCount(String roomId) async {
+    final snapshot = await _firestore
+        .collection('rooms')
+        .doc(roomId)
+        .collection('task_categories')
+        .count()
+        .get();
+    return snapshot.count ?? 0;
+  }
+
   Future<void> createTask({
     required String roomId,
     required String categoryId,
@@ -125,6 +145,8 @@ class TasksProvider with ChangeNotifier {
     required List<String> memberIds,
     TimeOfDay? timeSlot,
     int estimatedMinutes = 30,
+    List<int>? weekDays,
+    int? monthDay,
   }) async {
     final task = Task(
       id: '',
@@ -138,6 +160,8 @@ class TasksProvider with ChangeNotifier {
       timeSlot: timeSlot,
       estimatedMinutes: estimatedMinutes,
       createdAt: DateTime.now(),
+      weekDays: weekDays,
+      monthDay: monthDay,
     );
 
     final docRef = await _firestore
@@ -149,10 +173,12 @@ class TasksProvider with ChangeNotifier {
     // Generate first few instances immediately so dashboard updates fast,
     // then generate the rest in the background.
     try {
+      // OPTIMIZATION: checkExisting: false because this is a brand new task.
       await _firestoreService.generateTaskInstancesForTask(
         roomId,
         docRef.id,
         daysAhead: 3,
+        checkExisting: false,
       );
     } catch (e) {
       debugPrint('createTask: immediate generation (3 days) failed -> $e');
@@ -164,27 +190,30 @@ class TasksProvider with ChangeNotifier {
           debugPrint('createTask: background generation failed -> $e');
         });
 
-    // Send notification to room members
-    try {
-      final roomDoc = await _firestore.collection('rooms').doc(roomId).get();
-      final roomName = roomDoc.data()?['name'] as String? ?? 'Room';
-      final categoryDoc = await _firestore
-          .collection('rooms')
-          .doc(roomId)
-          .collection('task_categories')
-          .doc(categoryId)
-          .get();
-      final categoryName = categoryDoc.data()?['name'] as String? ?? 'Tasks';
+    // Send notification to room members in BACKGROUND (don't await)
+    // This allows the UI to pop immediately without waiting for extra reads/writes.
+    Future.microtask(() async {
+      try {
+        final roomDoc = await _firestore.collection('rooms').doc(roomId).get();
+        final roomName = roomDoc.data()?['name'] as String? ?? 'Room';
+        final categoryDoc = await _firestore
+            .collection('rooms')
+            .doc(roomId)
+            .collection('task_categories')
+            .doc(categoryId)
+            .get();
+        final categoryName = categoryDoc.data()?['name'] as String? ?? 'Tasks';
 
-      await NotificationHelper.notifyTaskCreated(
-        roomId: roomId,
-        roomName: roomName,
-        taskTitle: title,
-        categoryName: categoryName,
-      );
-    } catch (e) {
-      debugPrint('createTask: notification failed -> $e');
-    }
+        await NotificationHelper.notifyTaskCreated(
+          roomId: roomId,
+          roomName: roomName,
+          taskTitle: title,
+          categoryName: categoryName,
+        );
+      } catch (e) {
+        debugPrint('createTask: notification failed -> $e');
+      }
+    });
   }
 
   Future<void> updateTask(String roomId, Task task) async {

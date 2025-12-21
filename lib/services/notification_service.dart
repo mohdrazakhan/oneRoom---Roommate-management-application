@@ -44,30 +44,38 @@ class NotificationService {
     _initialized = true;
 
     // Request permission (iOS/macOS)
-    final settings = await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
+    try {
+      final settings = await _messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      debugPrint('✅ Notification permission granted');
-    } else if (settings.authorizationStatus ==
-        AuthorizationStatus.provisional) {
-      debugPrint('⚠️ Notification permission provisional');
-    } else {
-      debugPrint('❌ Notification permission denied');
-      return;
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        debugPrint('✅ Notification permission granted');
+      } else if (settings.authorizationStatus ==
+          AuthorizationStatus.provisional) {
+        debugPrint('⚠️ Notification permission provisional');
+      } else {
+        debugPrint('❌ Notification permission denied');
+        return;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to request notification permission: $e');
     }
 
     // Android 13+ runtime permission
     if (Platform.isAndroid) {
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.requestNotificationsPermission();
+      try {
+        await _localNotifications
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >()
+            ?.requestNotificationsPermission();
+      } catch (e) {
+        debugPrint('⚠️ Failed to request Android notification permission: $e');
+      }
     }
 
     // Initialize local notifications for Android/iOS foreground display
@@ -96,11 +104,15 @@ class NotificationService {
       description: 'Notifications for room activities',
       importance: Importance.high,
     );
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(androidChannel);
+    try {
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(androidChannel);
+    } catch (e) {
+      debugPrint('⚠️ Failed to create notification channel: $e');
+    }
 
     // Set up background message handler
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
@@ -116,34 +128,48 @@ class NotificationService {
 
     // Check if app was opened from a terminated state via notification
     // Store the data and process it when navigator is ready
-    final initialMessage = await _messaging.getInitialMessage();
-    if (initialMessage != null) {
-      debugPrint(
-        '📩 App opened from terminated state via notification: ${initialMessage.data}',
-      );
-      // Store the notification data to be processed when navigator is ready
-      NavigationService().setPendingNotificationData(
-        Map<String, dynamic>.from(initialMessage.data),
-      );
+    try {
+      final initialMessage = await _messaging.getInitialMessage();
+      if (initialMessage != null) {
+        debugPrint(
+          '📩 App opened from terminated state via notification: ${initialMessage.data}',
+        );
+        // Store the notification data to be processed when navigator is ready
+        NavigationService().setPendingNotificationData(
+          Map<String, dynamic>.from(initialMessage.data),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to check initial message: $e');
     }
 
     // Get FCM token and save to Firestore
     // Save token in background
     // ignore: unawaited_futures
-    _saveTokenToFirestore();
+    _saveTokenToFirestore().catchError((e) {
+      debugPrint('⚠️ Failed to save token: $e');
+    });
 
     // Subscribe to all rooms the user is a member of so server triggers reach this device
     // Subscribe to room topics in background (requires a quick Firestore query)
     // ignore: unawaited_futures
-    _subscribeToAllMemberRooms();
+    _subscribeToAllMemberRooms().catchError((e) {
+      debugPrint('⚠️ Failed to subscribe to member rooms: $e');
+    });
 
     // Subscribe to "all_users" topic for broadcast notifications
     // ignore: unawaited_futures
-    _messaging.subscribeToTopic('all_users');
+    _messaging.subscribeToTopic('all_users').catchError((e) {
+      debugPrint('⚠️ Failed to subscribe to all_users topic: $e');
+    });
     debugPrint('📢 Subscribed to all_users topic for broadcasts');
 
     // Listen for token refresh
-    _messaging.onTokenRefresh.listen(_saveTokenToFirestore);
+    _messaging.onTokenRefresh.listen((token) {
+      _saveTokenToFirestore(token).catchError((e) {
+        debugPrint('⚠️ Failed to allow token refresh save: $e');
+      });
+    });
   }
 
   /// Subscribe to all rooms the current user is a member of
@@ -299,26 +325,32 @@ class NotificationService {
 
   /// Save FCM token to Firestore for this user/device
   Future<void> _saveTokenToFirestore([String? token]) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
 
-    final fcmToken = token ?? await _messaging.getToken();
-    if (fcmToken == null) return;
+      final fcmToken = token ?? await _messaging.getToken();
+      if (fcmToken == null) return;
 
-    debugPrint('💾 Saving FCM token: ${fcmToken.substring(0, 20)}...');
+      debugPrint('💾 Saving FCM token: ${fcmToken.substring(0, 20)}...');
 
-    // Store in users/{uid}/tokens/{token} for multi-device support
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .collection('tokens')
-        .doc(fcmToken)
-        .set({
-          'token': fcmToken,
-          'platform': Platform.operatingSystem,
-          'createdAt': FieldValue.serverTimestamp(),
-          'lastUsed': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+      // Store in users/{uid}/tokens/{token} for multi-device support
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('tokens')
+          .doc(fcmToken)
+          .set({
+            'token': fcmToken,
+            'platform': Platform.operatingSystem,
+            'createdAt': FieldValue.serverTimestamp(),
+            'lastUsed': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('⚠️ Error saving FCM token: $e');
+      // Rethrow if you want the caller to handle it, but for void async we just log
+      // rethrow;
+    }
   }
 
   /// Public helper to ensure token is saved after login

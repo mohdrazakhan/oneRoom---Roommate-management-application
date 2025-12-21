@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../providers/rooms_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/subscription_service.dart';
 
 class CreateRoomScreen extends StatefulWidget {
   const CreateRoomScreen({super.key});
@@ -31,6 +32,47 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       _errorMessage = null;
     });
 
+    // Check Premium Limits
+    final roomsProvider = Provider.of<RoomsProvider>(context, listen: false);
+    final subService = Provider.of<SubscriptionService>(context, listen: false);
+
+    // Free tier limit: 5 rooms
+    if (!subService.isPremium && roomsProvider.rooms.length >= 5) {
+      setState(() {
+        _loading = false;
+        _errorMessage = null;
+      });
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Limit Reached'),
+            content: const Text(
+              'Free plan allows up to 5 rooms. Upgrade to Premium for unlimited rooms.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(context); // close dialog
+                  Navigator.pushNamed(
+                    context,
+                    '/subscription',
+                  ); // Need to register route
+                },
+                child: const Text('Go Premium'),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       final auth = Provider.of<AuthProvider>(context, listen: false);
       final uid = auth.firebaseUser?.uid;
@@ -39,10 +81,10 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         throw Exception('You must be signed in to create a room');
       }
 
-      await Provider.of<RoomsProvider>(
-        context,
-        listen: false,
-      ).createRoom(name: _nameCtrl.text.trim(), createdBy: uid);
+      await roomsProvider.createRoom(
+        name: _nameCtrl.text.trim(),
+        createdBy: uid,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

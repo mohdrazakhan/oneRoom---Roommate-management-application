@@ -1,16 +1,20 @@
 // ignore_for_file: deprecated_member_use
 import 'dart:io';
+import '../../widgets/safe_web_image.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../services/subscription_service.dart';
 import 'package:flutter/services.dart';
 import '../../Models/room.dart';
 import '../../services/firestore_service.dart';
 import '../../services/expense_export_service.dart';
 import 'expense_analytics_screen.dart';
+import '../../widgets/premium_avatar_wrapper.dart';
 
 class EnhancedRoomSettingsScreen extends StatefulWidget {
   final Room room;
@@ -361,6 +365,12 @@ class _EnhancedRoomSettingsScreenState
   }
 
   Future<void> _exportToPDF() async {
+    final subService = Provider.of<SubscriptionService>(context, listen: false);
+    if (!subService.isPremium) {
+      Navigator.pushNamed(context, '/subscription');
+      return;
+    }
+
     try {
       // Show loading
       showDialog(
@@ -405,6 +415,12 @@ class _EnhancedRoomSettingsScreenState
   }
 
   Future<void> _exportToExcel() async {
+    final subService = Provider.of<SubscriptionService>(context, listen: false);
+    if (!subService.isPremium) {
+      Navigator.pushNamed(context, '/subscription');
+      return;
+    }
+
     try {
       // Show loading
       showDialog(
@@ -543,26 +559,29 @@ class _EnhancedRoomSettingsScreenState
               CircleAvatar(
                 radius: 50,
                 backgroundColor: Colors.white.withValues(alpha: 0.2),
-                backgroundImage:
+                child:
                     widget.room.photoUrl != null &&
                         widget.room.photoUrl!.isNotEmpty
-                    ? NetworkImage(widget.room.photoUrl!)
-                    : null,
-                onBackgroundImageError: widget.room.photoUrl != null
-                    ? (exception, stackTrace) {
-                        // Handle image load error silently
-                        debugPrint('Error loading room photo: $exception');
-                      }
-                    : null,
-                child:
-                    widget.room.photoUrl == null ||
-                        widget.room.photoUrl!.isEmpty
-                    ? const Icon(
+                    ? ClipOval(
+                        child: SafeWebImage(
+                          widget.room.photoUrl!,
+                          width: 100,
+                          height: 100,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.home_rounded,
+                              size: 50,
+                              color: Colors.white,
+                            );
+                          },
+                        ),
+                      )
+                    : const Icon(
                         Icons.home_rounded,
                         size: 50,
                         color: Colors.white,
-                      )
-                    : null,
+                      ),
               ),
               if (_isUploadingPhoto)
                 Positioned.fill(
@@ -851,7 +870,61 @@ class _EnhancedRoomSettingsScreenState
     );
   }
 
+  Future<void> _removeMember(String memberId, String memberName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Member'),
+        content: Text(
+          'Are you sure you want to remove $memberName from the room?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await _firestoreService.leaveRoom(widget.room.id, memberId);
+
+        if (mounted) {
+          setState(() {
+            widget.room.members.remove(memberId);
+            _memberProfiles.remove(memberId);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$memberName has been removed'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error removing member: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   Widget _buildMembersSection(BuildContext context) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final isViewerCreator = widget.room.createdBy == currentUserId;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -879,37 +952,63 @@ class _EnhancedRoomSettingsScreenState
             ...widget.room.members.asMap().entries.map((entry) {
               final index = entry.key;
               final memberId = entry.value;
-              final isCreator = memberId == widget.room.createdBy;
+              final isMemberCreator = memberId == widget.room.createdBy;
               final memberName = _getMemberDisplayName(memberId);
               final profile = _memberProfiles[memberId];
               final photoUrl = profile?['photoUrl'] as String?;
+
+              final tier = profile?['subscriptionTier'] as String? ?? 'free';
+              final isLegacyPremium = profile?['isPremium'] == true;
+              final isPremium = tier != 'free' || isLegacyPremium;
+
+              final avatarContent = CircleAvatar(
+                radius: 24,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.1),
+                child: photoUrl != null
+                    ? ClipOval(
+                        child: SafeWebImage(
+                          photoUrl,
+                          width: 48,
+                          height: 48,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Text(
+                              _getMemberInitials(memberId),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                    : Text(
+                        _getMemberInitials(memberId),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+              );
 
               return Column(
                 children: [
                   if (index > 0) const Divider(height: 24),
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: photoUrl != null
-                            ? null
-                            : Theme.of(
-                                context,
-                              ).colorScheme.primary.withValues(alpha: 0.1),
-                        backgroundImage: photoUrl != null
-                            ? NetworkImage(photoUrl)
-                            : null,
-                        child: photoUrl == null
-                            ? Text(
-                                _getMemberInitials(memberId),
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              )
-                            : null,
-                      ),
+                      if (isPremium)
+                        PremiumAvatarWrapper(
+                          isPremium: true,
+                          size: 26,
+                          borderWidth: 2,
+                          child: avatarContent,
+                        )
+                      else
+                        avatarContent,
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
@@ -933,7 +1032,7 @@ class _EnhancedRoomSettingsScreenState
                           ],
                         ),
                       ),
-                      if (isCreator)
+                      if (isMemberCreator)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 12,
@@ -962,6 +1061,15 @@ class _EnhancedRoomSettingsScreenState
                               ),
                             ],
                           ),
+                        )
+                      else if (isViewerCreator)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.remove_circle_outline,
+                            color: Colors.red,
+                          ),
+                          onPressed: () => _removeMember(memberId, memberName),
+                          tooltip: 'Remove member',
                         ),
                     ],
                   ),

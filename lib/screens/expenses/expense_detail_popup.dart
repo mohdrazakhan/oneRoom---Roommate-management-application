@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import '../../Models/expense.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/formatters.dart';
-import 'enhanced_modern_expense_screen.dart';
+import 'add_expense_sheet.dart';
+import '../../widgets/safe_web_image.dart';
 
 class ExpenseDetailPopup extends StatelessWidget {
   final Expense expense;
@@ -180,10 +181,8 @@ class ExpenseDetailPopup extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  FutureBuilder<Map<String, Map<String, dynamic>>>(
-                    future: FirestoreService().getUsersProfiles(
-                      expense.splitAmong,
-                    ),
+                  FutureBuilder<Map<String, String>>(
+                    future: _getParticipantNames(expense.splitAmong),
                     builder: (context, snapshot) {
                       if (!snapshot.hasData) {
                         return const Center(
@@ -194,16 +193,10 @@ class ExpenseDetailPopup extends StatelessWidget {
                         );
                       }
 
-                      final profiles = snapshot.data!;
+                      final names = snapshot.data!;
                       return Column(
                         children: expense.splitAmong.map((uid) {
-                          final profile = profiles[uid];
-                          final name =
-                              profile?['displayName'] ??
-                              profile?['name'] ??
-                              (profile?['email'] is String
-                                  ? (profile!['email'] as String).split('@')[0]
-                                  : uid);
+                          final name = names[uid] ?? 'Unknown';
                           final split = expense.splits[uid] ?? 0.0;
 
                           return Padding(
@@ -214,14 +207,22 @@ class ExpenseDetailPopup extends StatelessWidget {
                                   radius: 16,
                                   backgroundColor: theme.colorScheme.primary
                                       .withValues(alpha: 0.1),
-                                  child: Text(
-                                    name[0].toUpperCase(),
-                                    style: TextStyle(
-                                      color: theme.colorScheme.primary,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
+                                  child: uid.startsWith('guest_')
+                                      ? Icon(
+                                          Icons.person,
+                                          size: 16,
+                                          color: theme.colorScheme.primary,
+                                        )
+                                      : Text(
+                                          name.isNotEmpty
+                                              ? name[0].toUpperCase()
+                                              : '?',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.primary,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        ),
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
@@ -310,7 +311,7 @@ class ExpenseDetailPopup extends StatelessWidget {
                     const SizedBox(height: 12),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
+                      child: SafeWebImage(
                         expense.receiptUrl!,
                         fit: BoxFit.cover,
                         loadingBuilder: (context, child, loadingProgress) {
@@ -376,7 +377,65 @@ class ExpenseDetailPopup extends StatelessWidget {
     );
   }
 
+  Future<Map<String, String>> _getParticipantNames(List<String> uids) async {
+    final names = <String, String>{};
+    final userUids = <String>[];
+    final guestUids = <String>[];
+
+    for (var uid in uids) {
+      if (uid.startsWith('guest_')) {
+        guestUids.add(uid);
+      } else {
+        userUids.add(uid);
+      }
+    }
+
+    // Fetch Users
+    if (userUids.isNotEmpty) {
+      final profiles = await FirestoreService().getUsersProfiles(userUids);
+      for (var uid in userUids) {
+        final p = profiles[uid];
+        if (p != null) {
+          names[uid] =
+              p['displayName'] ??
+              p['name'] ??
+              (p['email'] != null ? (p['email'] as String).split('@')[0] : uid);
+        } else {
+          names[uid] = uid;
+        }
+      }
+    }
+
+    // Fetch Guests (from Room)
+    if (guestUids.isNotEmpty) {
+      try {
+        final room = await FirestoreService().getRoom(roomId);
+        if (room != null && room['guests'] != null) {
+          final guests = room['guests'] as Map<String, dynamic>;
+          for (var uid in guestUids) {
+            if (guests.containsKey(uid)) {
+              names[uid] = '${guests[uid]['name']} (Guest)';
+            } else {
+              names[uid] = 'Guest';
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fill missing
+    for (var uid in uids) {
+      if (!names.containsKey(uid)) names[uid] = uid;
+    }
+
+    return names;
+  }
+
   Future<String> _getUserDisplayName(String uid) async {
+    if (uid.startsWith('guest_')) {
+      final names = await _getParticipantNames([uid]);
+      return names[uid] ?? 'Guest';
+    }
     try {
       final profiles = await FirestoreService().getUsersProfiles([uid]);
       final profile = profiles[uid];
@@ -391,12 +450,11 @@ class ExpenseDetailPopup extends StatelessWidget {
   }
 
   Future<void> _editExpense(BuildContext context) async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) =>
-            EnhancedModernExpenseScreen(roomId: roomId, expense: expense),
-      ),
+    final result = await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AddExpenseSheet(roomId: roomId, expense: expense),
     );
 
     if (result == true && context.mounted) {

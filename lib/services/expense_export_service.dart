@@ -37,8 +37,10 @@ class ExpenseExportService {
     required List<Expense> expenses,
     required String roomName,
     required String currency,
-    required Map<String, String> memberNames, // uid -> name mapping
+
+    Map<String, String>? memberNames, // uid -> name mapping
   }) async {
+    final names = memberNames ?? {};
     final pdf = pw.Document();
 
     // Convert currency symbol to text code for PDF
@@ -154,7 +156,7 @@ class ExpenseExportService {
                 ),
                 // Data rows
                 ...expenses.map((expense) {
-                  final payerName = memberNames[expense.paidBy] ?? 'Unknown';
+                  final payerName = names[expense.paidBy] ?? expense.paidBy;
                   return pw.TableRow(
                     children: [
                       _buildTableCell(
@@ -181,7 +183,7 @@ class ExpenseExportService {
             pw.SizedBox(height: 12),
 
             ...expensesByPayer.entries.map((entry) {
-              final memberName = memberNames[entry.key] ?? 'Unknown';
+              final memberName = names[entry.key] ?? entry.key;
               final memberTotal = entry.value.fold<double>(
                 0.0,
                 (sum, exp) => sum + exp.amount,
@@ -244,8 +246,10 @@ class ExpenseExportService {
     required List<Expense> expenses,
     required String roomName,
     required String currency,
-    required Map<String, String> memberNames,
+
+    Map<String, String>? memberNames,
   }) async {
+    final names = memberNames ?? {};
     final excel = excel_pkg.Excel.createExcel();
     final sheet = excel['Expense Summary'];
 
@@ -283,7 +287,7 @@ class ExpenseExportService {
 
     // Transaction data
     for (final expense in expenses) {
-      final payerName = memberNames[expense.paidBy] ?? 'Unknown';
+      final payerName = names[expense.paidBy] ?? expense.paidBy;
       sheet.appendRow([
         excel_pkg.TextCellValue(
           DateFormat('MMM dd, yyyy').format(expense.createdAt),
@@ -314,7 +318,7 @@ class ExpenseExportService {
     }
 
     for (final entry in expensesByPayer.entries) {
-      final memberName = memberNames[entry.key] ?? 'Unknown';
+      final memberName = names[entry.key] ?? entry.key;
       final memberTotal = entry.value.fold<double>(
         0.0,
         (sum, exp) => sum + exp.amount,

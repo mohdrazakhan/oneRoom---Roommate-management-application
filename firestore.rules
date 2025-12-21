@@ -102,10 +102,14 @@ service cloud.firestore {
         allow create: if isMemberOfRoom(roomId);
 
         // Members can update their own messages (for editing)
-        // Or update any message for poll voting
+        // Or update any message for poll voting, read receipts, or hiding
         allow update: if isMemberOfRoom(roomId) && (
           // allow vote updates on polls
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pollOptions']) ||
+          // allow read receipts (adding to readBy array)
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']) ||
+          // allow hiding messages (adding to hiddenBy array)
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenBy']) ||
           // allow edits only by the original sender (support legacy sender field names)
           request.auth.uid == resource.data.senderId ||
           request.auth.uid == resource.data.userId ||

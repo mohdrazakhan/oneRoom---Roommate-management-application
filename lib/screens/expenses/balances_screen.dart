@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../Models/expense.dart';
 import '../../Models/payment.dart';
 import '../../services/firestore_service.dart';
+import 'record_payment_screen.dart';
 
 class BalancesScreen extends StatelessWidget {
   final String roomId;
@@ -109,7 +110,7 @@ class BalancesScreen extends StatelessWidget {
                     final isCurrentUser = uid == currentUser.uid;
 
                     return FutureBuilder<String>(
-                      future: _getUserName(firestoreService, uid),
+                      future: _getUserName(firestoreService, uid, roomId),
                       builder: (context, snapshot) {
                         final userName = snapshot.data ?? 'Loading...';
                         final isOwed = balance > 0.01;
@@ -212,8 +213,12 @@ class BalancesScreen extends StatelessWidget {
                     ...settlements.map((settlement) {
                       return FutureBuilder<List<String>>(
                         future: Future.wait([
-                          _getUserName(firestoreService, settlement.from),
-                          _getUserName(firestoreService, settlement.to),
+                          _getUserName(
+                            firestoreService,
+                            settlement.from,
+                            roomId,
+                          ),
+                          _getUserName(firestoreService, settlement.to, roomId),
                         ]),
                         builder: (context, snapshot) {
                           if (!snapshot.hasData) {
@@ -235,102 +240,118 @@ class BalancesScreen extends StatelessWidget {
                                 (isCurrentUserPaying || isCurrentUserReceiving)
                                 ? Colors.amber[50]
                                 : null,
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Row(
-                                children: [
-                                  // From person
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          fromName +
-                                              (isCurrentUserPaying
-                                                  ? ' (You)'
-                                                  : ''),
-                                          style: TextStyle(
-                                            fontWeight: isCurrentUserPaying
-                                                ? FontWeight.bold
-                                                : FontWeight.w600,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'pays',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.copyWith(
-                                                color: Colors.grey[600],
-                                              ),
-                                        ),
-                                      ],
+                            child: InkWell(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => RecordPaymentScreen(
+                                      roomId: roomId,
+                                      initialPayerId: settlement.from,
+                                      initialReceiverId: settlement.to,
+                                      initialAmount: settlement.amount,
                                     ),
                                   ),
-
-                                  // Arrow and amount
-                                  Column(
-                                    children: [
-                                      Icon(
-                                        Icons.arrow_forward,
-                                        color: Colors.blue[700],
+                                );
+                              },
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Row(
+                                  children: [
+                                    // From person
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            fromName +
+                                                (isCurrentUserPaying
+                                                    ? ' (You)'
+                                                    : ''),
+                                            style: TextStyle(
+                                              fontWeight: isCurrentUserPaying
+                                                  ? FontWeight.bold
+                                                  : FontWeight.w600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'pays',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                  color: Colors.grey[600],
+                                                ),
+                                          ),
+                                        ],
                                       ),
-                                      const SizedBox(height: 4),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
+                                    ),
+
+                                    // Arrow and amount
+                                    Column(
+                                      children: [
+                                        Icon(
+                                          Icons.arrow_forward,
                                           color: Colors.blue[700],
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '₹${settlement.amount.toStringAsFixed(2)}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-
-                                  // To person
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.end,
-                                      children: [
-                                        Text(
-                                          toName +
-                                              (isCurrentUserReceiving
-                                                  ? ' (You)'
-                                                  : ''),
-                                          style: TextStyle(
-                                            fontWeight: isCurrentUserReceiving
-                                                ? FontWeight.bold
-                                                : FontWeight.w600,
-                                          ),
                                         ),
                                         const SizedBox(height: 4),
-                                        Text(
-                                          'receives',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.copyWith(
-                                                color: Colors.grey[600],
-                                              ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 6,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.blue[700],
+                                            borderRadius: BorderRadius.circular(
+                                              20,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '₹${settlement.amount.toStringAsFixed(2)}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          ),
                                         ),
                                       ],
                                     ),
-                                  ),
-                                ],
+
+                                    // To person
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            toName +
+                                                (isCurrentUserReceiving
+                                                    ? ' (You)'
+                                                    : ''),
+                                            style: TextStyle(
+                                              fontWeight: isCurrentUserReceiving
+                                                  ? FontWeight.bold
+                                                  : FontWeight.w600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'receives',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                  color: Colors.grey[600],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
@@ -409,7 +430,25 @@ class BalancesScreen extends StatelessWidget {
   Future<String> _getUserName(
     FirestoreService firestoreService,
     String uid,
+    String roomId,
   ) async {
+    if (uid.startsWith('guest_')) {
+      // It's a guest
+      try {
+        final room = await firestoreService.getRoom(roomId);
+        if (room != null && room['guests'] != null) {
+          final guest = room['guests'][uid];
+          if (guest != null) {
+            return '${guest['name']} (Guest)';
+          }
+        }
+        return 'Guest ($uid)';
+      } catch (e) {
+        return 'Guest';
+      }
+    }
+
+    // It's a registered user
     try {
       final profile = await firestoreService.getUserProfile(uid);
       return _pickName(profile, uid);

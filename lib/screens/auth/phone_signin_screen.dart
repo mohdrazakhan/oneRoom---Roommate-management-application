@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../widgets/primary_button.dart';
 
 class PhoneSignInScreen extends StatefulWidget {
   const PhoneSignInScreen({super.key});
@@ -17,13 +16,110 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
   bool _loading = false;
   bool _codeSent = false;
   String? _verificationId;
-  String _countryCode = '+1'; // Default to USA
+  String _countryCode = '+91'; // Default to India as requested
+
+  // Comprehensive list of country codes
+  final List<Map<String, String>> _countries = [
+    {'code': '+91', 'name': 'India', 'flag': '🇮🇳'},
+    {'code': '+1', 'name': 'USA/Canada', 'flag': '🇺🇸'},
+    {'code': '+44', 'name': 'UK', 'flag': '🇬🇧'},
+    {'code': '+86', 'name': 'China', 'flag': '🇨🇳'},
+    {'code': '+81', 'name': 'Japan', 'flag': '🇯🇵'},
+    {'code': '+82', 'name': 'South Korea', 'flag': '🇰🇷'},
+    {'code': '+61', 'name': 'Australia', 'flag': '🇦🇺'},
+    {'code': '+49', 'name': 'Germany', 'flag': '🇩🇪'},
+    {'code': '+33', 'name': 'France', 'flag': '🇫🇷'},
+    {'code': '+39', 'name': 'Italy', 'flag': '🇮🇹'},
+    {'code': '+7', 'name': 'Russia', 'flag': '🇷🇺'},
+    {'code': '+971', 'name': 'UAE', 'flag': '🇦🇪'},
+    {'code': '+966', 'name': 'Saudi Arabia', 'flag': '🇸🇦'},
+    {'code': '+92', 'name': 'Pakistan', 'flag': '🇵🇰'},
+    {'code': '+880', 'name': 'Bangladesh', 'flag': '🇧🇩'},
+    {'code': '+94', 'name': 'Sri Lanka', 'flag': '🇱🇰'},
+    {'code': '+977', 'name': 'Nepal', 'flag': '🇳🇵'},
+    {'code': '+62', 'name': 'Indonesia', 'flag': '🇮🇩'},
+    {'code': '+60', 'name': 'Malaysia', 'flag': '🇲🇾'},
+    {'code': '+65', 'name': 'Singapore', 'flag': '🇸🇬'},
+    {'code': '+66', 'name': 'Thailand', 'flag': '🇹🇭'},
+    {'code': '+84', 'name': 'Vietnam', 'flag': '🇻🇳'},
+    {'code': '+63', 'name': 'Philippines', 'flag': '🇵🇭'},
+    {'code': '+55', 'name': 'Brazil', 'flag': '🇧🇷'},
+    {'code': '+52', 'name': 'Mexico', 'flag': '🇲🇽'},
+    {'code': '+20', 'name': 'Egypt', 'flag': '🇪🇬'},
+    {'code': '+27', 'name': 'South Africa', 'flag': '🇿🇦'},
+    {'code': '+234', 'name': 'Nigeria', 'flag': '🇳🇬'},
+    // Add more as needed
+  ];
 
   @override
   void dispose() {
     _phoneCtrl.dispose();
     _otpCtrl.dispose();
     super.dispose();
+  }
+
+  Widget _buildPhoneInput(Color primaryColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          // Country Code Dropdown
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _countryCode,
+              icon: const Icon(Icons.arrow_drop_down),
+              style: const TextStyle(
+                fontSize: 16,
+                color: Colors.black87,
+                fontWeight: FontWeight.w500,
+              ),
+              onChanged: (val) {
+                if (val != null) setState(() => _countryCode = val);
+              },
+              menuMaxHeight: 300, // Limit height for scrolling
+              items: _countries.map((country) {
+                return DropdownMenuItem<String>(
+                  value: country['code'],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(country['flag']!),
+                      const SizedBox(width: 8),
+                      Text(country['code']!),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          Container(
+            height: 24,
+            width: 1,
+            color: Colors.grey.shade300,
+            margin: const EdgeInsets.symmetric(horizontal: 12),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _phoneCtrl,
+              keyboardType: TextInputType.phone,
+              style: const TextStyle(fontSize: 16, letterSpacing: 0.5),
+              decoration: const InputDecoration(
+                hintText: 'Enter Phone Number',
+                hintStyle: TextStyle(color: Colors.grey),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _sendCode() async {
@@ -45,11 +141,16 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
         phoneNumber: fullPhone,
         verificationCompleted:
             (firebase_auth.PhoneAuthCredential credential) async {
+              _dismissVerificationScreen();
               // Auto-verification (Android only)
               try {
                 debugPrint('✅ Phone auto-verification successful');
                 await authProvider.signInWithPhoneCredential(credential);
-                // Don't navigate manually - AuthWrapper will handle navigation
+
+                // Verification successful, close the screen
+                if (mounted) {
+                  Navigator.of(context).pop();
+                }
               } on firebase_auth.FirebaseAuthException catch (e) {
                 if (mounted) {
                   _showMessage(_getPhoneAuthErrorMessage(e));
@@ -61,12 +162,14 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
               }
             },
         verificationFailed: (firebase_auth.FirebaseAuthException e) {
+          _dismissVerificationScreen();
           if (mounted) {
             setState(() => _loading = false);
             _showMessage(_getPhoneAuthErrorMessage(e));
           }
         },
         codeSent: (String verificationId, int? resendToken) {
+          _dismissVerificationScreen();
           if (mounted) {
             setState(() {
               _verificationId = verificationId;
@@ -119,7 +222,11 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
       );
 
       await authProvider.signInWithPhoneCredential(credential);
-      // Don't navigate manually - AuthWrapper will handle navigation
+
+      // Verification successful, close the screen
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
     } on firebase_auth.FirebaseAuthException catch (e) {
       if (mounted) {
         setState(() => _loading = false);
@@ -152,6 +259,15 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
     }
   }
 
+  void _dismissVerificationScreen() {
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) {
+      // Keep popping if the route name starts with /link (our deep link handler)
+      final name = route.settings.name;
+      return name == null || !name.startsWith('/link');
+    });
+  }
+
   void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -161,199 +277,179 @@ class _PhoneSignInScreenState extends State<PhoneSignInScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = const Color(0xFF6366F1); // Indigo
+
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.10),
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Colors.black87),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const SizedBox(height: 20),
+              // Illustration (Icon)
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: primaryColor.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _codeSent
+                      ? Icons.mark_email_read_rounded
+                      : Icons.phonelink_ring_rounded,
+                  size: 40,
+                  color: primaryColor,
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // Title & Subtitle
+              Text(
+                'Verification',
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _codeSent
+                    ? 'We will send you a One Time Password\non your phone number'
+                    : 'We will send you a One Time Password\non your phone number',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: Colors.grey[600],
+                  height: 1.5,
+                ),
+              ),
+
+              const SizedBox(height: 48),
+
+              // Inputs depending on state
+              if (!_codeSent)
+                _buildPhoneInput(primaryColor)
+              else
+                _buildOtpInput(primaryColor),
+
+              const Spacer(),
+
+              // Action Button
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: _loading
+                      ? null
+                      : (_codeSent ? _verifyCode : _sendCode),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    disabledBackgroundColor: primaryColor.withValues(
+                      alpha: 0.6,
+                    ),
+                  ),
+                  child: _loading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : Text(
+                          _codeSent ? 'VERIFY' : 'GET OTP',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                ),
+              ),
+              if (_codeSent) ...[
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: _loading
+                      ? null
+                      : () {
+                          setState(() {
+                            _codeSent = false;
+                            _otpCtrl.clear();
+                          });
+                        },
+                  child: RichText(
+                    text: TextSpan(
+                      text: "Didn't receive the verification OTP? ",
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      children: [
+                        TextSpan(
+                          text: 'Resend again',
+                          style: TextStyle(
+                            color: primaryColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
             ],
           ),
         ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Back button
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // Phone icon
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [
-                          Theme.of(context).colorScheme.primary,
-                          Theme.of(context).colorScheme.secondary,
-                        ],
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.phone_android,
-                      size: 40,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    _codeSent ? 'Enter Verification Code' : 'Phone Sign In',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 26,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _codeSent
-                        ? 'Enter the 6-digit code sent to your phone'
-                        : 'Enter your phone number to receive a verification code',
-                    style: const TextStyle(color: Colors.grey, fontSize: 15),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 32),
-                  Card(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        children: [
-                          if (!_codeSent) ...[
-                            // Country code selector
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 16,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: Colors.grey.shade300,
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: DropdownButton<String>(
-                                    value: _countryCode,
-                                    underline: const SizedBox(),
-                                    items: const [
-                                      DropdownMenuItem(
-                                        value: '+1',
-                                        child: Text('🇺🇸 +1'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: '+91',
-                                        child: Text('🇮🇳 +91'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: '+44',
-                                        child: Text('🇬🇧 +44'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: '+86',
-                                        child: Text('🇨🇳 +86'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: '+81',
-                                        child: Text('🇯🇵 +81'),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: '+82',
-                                        child: Text('🇰🇷 +82'),
-                                      ),
-                                    ],
-                                    onChanged: (val) {
-                                      if (val != null) {
-                                        setState(() => _countryCode = val);
-                                      }
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: TextFormField(
-                                    controller: _phoneCtrl,
-                                    keyboardType: TextInputType.phone,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Phone Number',
-                                      hintText: '1234567890',
-                                      prefixIcon: Icon(Icons.phone),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Enter phone number without country code',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                            PrimaryButton(
-                              label: 'Send Code',
-                              onPressed: _sendCode,
-                              loading: _loading,
-                              width: double.infinity,
-                            ),
-                          ] else ...[
-                            TextFormField(
-                              controller: _otpCtrl,
-                              keyboardType: TextInputType.number,
-                              maxLength: 6,
-                              decoration: const InputDecoration(
-                                labelText: 'Verification Code',
-                                hintText: '123456',
-                                prefixIcon: Icon(Icons.lock),
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                            PrimaryButton(
-                              label: 'Verify & Sign In',
-                              onPressed: _verifyCode,
-                              loading: _loading,
-                              width: double.infinity,
-                            ),
-                            const SizedBox(height: 12),
-                            TextButton(
-                              onPressed: () {
-                                setState(() {
-                                  _codeSent = false;
-                                  _otpCtrl.clear();
-                                });
-                              },
-                              child: const Text('Change Phone Number'),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+      ),
+    );
+  }
+
+  Widget _buildOtpInput(Color primaryColor) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: TextField(
+            controller: _otpCtrl,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 8.0,
+            ),
+            decoration: const InputDecoration(
+              counterText: '',
+              hintText: '• • • • • •',
+              hintStyle: TextStyle(color: Colors.grey, letterSpacing: 8.0),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(vertical: 16),
             ),
           ),
         ),
-      ),
+      ],
     );
   }
 }

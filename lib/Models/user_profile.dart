@@ -15,6 +15,12 @@ class UserProfile {
   final bool expenseRemindersEnabled;
   final bool chatNotificationsEnabled;
   final bool expensePaymentAlertsEnabled;
+  final List<String> roomOrder; // Custom defined order of rooms
+  final String subscriptionTier; // 'free', 'standard', 'plus'
+
+  // Backwards compatibility helpers
+  bool get isPremium => true; // Premium features enabled for EVERYONE
+  bool get isAdFree => subscriptionTier == 'plus';
 
   UserProfile({
     required this.uid,
@@ -30,30 +36,36 @@ class UserProfile {
     this.expenseRemindersEnabled = true,
     this.chatNotificationsEnabled = true,
     this.expensePaymentAlertsEnabled = true,
-  }) : joinedRooms = joinedRooms ?? [];
+    List<String>? roomOrder,
+    this.subscriptionTier = 'free',
+  }) : joinedRooms = joinedRooms ?? [],
+       roomOrder = roomOrder ?? [];
 
   factory UserProfile.fromDoc(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
-    return UserProfile(
-      uid: doc.id,
-      displayName: data['displayName'],
-      email: data['email'],
-      photoUrl: data['photoUrl'],
-      phoneNumber: data['phoneNumber'],
-      tagline: data['tagline'],
-      dateOfBirth: data['dateOfBirth'] != null
-          ? (data['dateOfBirth'] as Timestamp).toDate()
-          : null,
-      joinedRooms: List<String>.from(data['joinedRooms'] ?? const []),
-      notificationsEnabled: data['notificationsEnabled'] ?? true,
-      taskRemindersEnabled: data['taskRemindersEnabled'] ?? true,
-      expenseRemindersEnabled: data['expenseRemindersEnabled'] ?? true,
-      chatNotificationsEnabled: data['chatNotificationsEnabled'] ?? true,
-      expensePaymentAlertsEnabled: data['expensePaymentAlertsEnabled'] ?? true,
-    );
+    if (doc.data() == null) {
+      // Handle the case where the document exists but has no data
+      // This might happen if we just created the user auth but not the profile doc yet?
+      // Or simply throw or return default.
+      return UserProfile(uid: doc.id);
+    }
+    return UserProfile.fromMap(doc.data() as Map<String, dynamic>, doc.id);
   }
 
   factory UserProfile.fromMap(Map<String, dynamic> map, String uid) {
+    // Logic to determine tier
+    String tier = map['subscriptionTier'] as String? ?? 'free';
+
+    // Legacy mapping: if no tier defined, but isPremium is true, assume standard or plus.
+    // Let's map legacy isPremium to Standard (or Plus if we want to be generous).
+    // Given the user request "two premium plan", let's map legacy to Standard to maintain "ads remain same" functionality?
+    // User said "unlimited access all app feature but ads remain same" is one plan.
+    // The previous implementation had NO ads for premium.
+    // So if a user was previously Premium, they expected NO ads.
+    // Therefore, legacy isPremium should map to 'plus' (No Ads).
+    if (tier == 'free' && map['isPremium'] == true) {
+      tier = 'plus';
+    }
+
     return UserProfile(
       uid: uid,
       displayName: map['displayName'],
@@ -70,6 +82,8 @@ class UserProfile {
       expenseRemindersEnabled: map['expenseRemindersEnabled'] ?? true,
       chatNotificationsEnabled: map['chatNotificationsEnabled'] ?? true,
       expensePaymentAlertsEnabled: map['expensePaymentAlertsEnabled'] ?? true,
+      roomOrder: List<String>.from(map['roomOrder'] ?? const []),
+      subscriptionTier: tier,
     );
   }
 
@@ -89,6 +103,8 @@ class UserProfile {
       'expenseRemindersEnabled': expenseRemindersEnabled,
       'chatNotificationsEnabled': chatNotificationsEnabled,
       'expensePaymentAlertsEnabled': expensePaymentAlertsEnabled,
+      'roomOrder': roomOrder,
+      'subscriptionTier': subscriptionTier,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -108,6 +124,8 @@ class UserProfile {
     bool? expenseRemindersEnabled,
     bool? chatNotificationsEnabled,
     bool? expensePaymentAlertsEnabled,
+    List<String>? roomOrder,
+    String? subscriptionTier,
   }) => UserProfile(
     uid: uid ?? this.uid,
     displayName: displayName ?? this.displayName,
@@ -125,5 +143,7 @@ class UserProfile {
         chatNotificationsEnabled ?? this.chatNotificationsEnabled,
     expensePaymentAlertsEnabled:
         expensePaymentAlertsEnabled ?? this.expensePaymentAlertsEnabled,
+    roomOrder: roomOrder ?? List<String>.from(this.roomOrder),
+    subscriptionTier: subscriptionTier ?? this.subscriptionTier,
   );
 }

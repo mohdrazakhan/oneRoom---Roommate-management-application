@@ -14,6 +14,7 @@ enum NotificationType {
   chatMessage,
   memberAdded,
   memberRemoved,
+  paymentRecorded,
   other;
 
   String get displayName {
@@ -42,6 +43,8 @@ enum NotificationType {
         return 'Member Added';
       case NotificationType.memberRemoved:
         return 'Member Removed';
+      case NotificationType.paymentRecorded:
+        return 'Payment Recorded';
       case NotificationType.other:
         return 'Notification';
     }

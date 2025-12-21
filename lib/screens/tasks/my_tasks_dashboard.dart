@@ -173,14 +173,486 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _buildTodayTasks(currentUserId),
-          _buildUpcomingTasks(currentUserId),
+          _buildIncomingSwapRequests(currentUserId),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildTodayTasks(currentUserId),
+                _buildUpcomingTasks(currentUserId),
+              ],
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  Widget _buildIncomingSwapRequests(String userId) {
+    return Column(
+      children: [
+        // 1. Incoming offers for tasks I wanted to swap (Phase 3: Finalize)
+        StreamBuilder<List<Map<String, dynamic>>>(
+          stream: _firestoreService.getSwapOffersForUser(userId),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return Container(
+              color: Colors.amber.withValues(alpha: 0.1),
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.verified_user_outlined,
+                        size: 20,
+                        color: Colors.amber,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Received Offers',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber[900],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 150, // Slightly taller for buttons
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: snapshot.data!.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: 12),
+                      itemBuilder: (context, index) {
+                        return _buildSwapOfferCard(
+                          snapshot.data![index],
+                          userId,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+
+        // 2. Incoming requests from others (Phase 1: Propose)
+        StreamBuilder<List<Map<String, dynamic>>>(
+          stream: _firestoreService.roomsForUser(userId),
+          builder: (context, roomSnapshot) {
+            if (!roomSnapshot.hasData || roomSnapshot.data!.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return Column(
+              children: roomSnapshot.data!.map((room) {
+                return StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: _firestoreService.getPendingSwapRequests(
+                    room['id'],
+                    userId,
+                  ),
+                  builder: (ctx, snap) {
+                    if (!snap.hasData || snap.data!.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return _buildRoomSwapRequestsSection(
+                      room['name'] ?? 'Room',
+                      snap.data!,
+                      userId,
+                    );
+                  },
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSwapOfferCard(Map<String, dynamic> task, String userId) {
+    final title = task['title'] ?? 'Task';
+    final request = task['swapRequest'] ?? {};
+    final responderName = request['responderName'] ?? 'Unknown';
+    final offeredTaskTitle = request['offeredTaskTitle'] ?? 'Task';
+    final offeredTaskDate = (request['offeredTaskDate'] as Timestamp?)
+        ?.toDate();
+
+    return Container(
+      width: 280,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$responderName offers:',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                offeredTaskTitle,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (offeredTaskDate != null)
+                Text(
+                  DateFormat('MMM dd').format(offeredTaskDate),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              const SizedBox(height: 4),
+              Text(
+                'for your task: "$title"',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                  color: Colors.grey,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _finalizeSwap(task, false),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: Colors.red,
+                    side: BorderSide(color: Colors.red.withValues(alpha: 0.5)),
+                  ),
+                  child: const Text('Reject'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => _finalizeSwap(task, true),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: Colors.green,
+                  ),
+                  child: const Text('Accept'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _finalizeSwap(Map<String, dynamic> task, bool approve) async {
+    final roomId = task['roomId'];
+    final taskInstanceId = task['taskInstanceId'];
+    if (roomId == null || taskInstanceId == null) return;
+
+    try {
+      if (approve) {
+        // Show loading or optimistic update?
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Finalizing swap...')));
+      }
+
+      await _firestoreService.finalizeSwap(
+        roomId: roomId,
+        taskInstanceId: taskInstanceId,
+        approve: approve,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              approve ? 'Swap completed successfully!' : 'Swap offer rejected.',
+            ),
+            backgroundColor: approve ? Colors.green : Colors.grey,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Widget _buildRoomSwapRequestsSection(
+    String roomName,
+    List<Map<String, dynamic>> requests,
+    String userId,
+  ) {
+    return Container(
+      color: Colors.blue.withValues(alpha: 0.05),
+      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.inbox_rounded,
+                size: 20,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Swap Requests in $roomName',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${requests.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 140,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: requests.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final req = requests[index];
+                return _buildSwapRequestCard(req, userId);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSwapRequestCard(Map<String, dynamic> task, String userId) {
+    final title = task['title'] ?? 'Task';
+    final request = task['swapRequest'] ?? {};
+    final requesterName = request['requesterName'] ?? 'Unknown';
+    final date = (task['scheduledDate'] as Timestamp?)?.toDate();
+
+    return Container(
+      width: 260,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$requesterName asks to swap:',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (date != null)
+                Text(
+                  DateFormat('MMM dd').format(date),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+            ],
+          ),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => _showSwapOfferDialog(task),
+              style: ElevatedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('View & Respond'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showSwapOfferDialog(Map<String, dynamic> incomingTask) async {
+    final roomId = incomingTask['roomId'];
+    final incomingTaskInstanceId = incomingTask['taskInstanceId'];
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null || roomId == null) return;
+
+    // Fetch my upcoming tasks
+    // We can't reuse the stream easily, so we'll fetch once or listen
+    // For simplicity, fetch once
+    final myTasksSnapshot = await _firestoreService
+        .getUpcomingTasksForUser(currentUserId)
+        .first;
+    // Filter tasks from same room? Not strictly required but better for roommates.
+    // Filter tasks that are NOT pending or completed
+    final myOfferableTasks = myTasksSnapshot.where((t) {
+      return t['roomId'] == roomId &&
+          t['isCompleted'] != true &&
+          t['assignedTo'] == currentUserId;
+    }).toList();
+
+    if (!mounted) return;
+
+    final selectedTask = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Offer a Swap'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Select one of your tasks to offer in exchange for "${incomingTask['title']}":',
+              ),
+              const SizedBox(height: 12),
+              if (myOfferableTasks.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Text(
+                    'You have no upcoming tasks in this room to offer.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: myOfferableTasks.length,
+                    separatorBuilder: (ctx, i) => const Divider(),
+                    itemBuilder: (ctx, i) {
+                      final t = myOfferableTasks[i];
+                      final date = (t['scheduledDate'] as Timestamp?)?.toDate();
+                      return ListTile(
+                        title: Text(t['title'] ?? 'Task'),
+                        subtitle: date != null
+                            ? Text(DateFormat('MMM dd').format(date))
+                            : null,
+                        onTap: () => Navigator.pop(context, t),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedTask != null) {
+      _proposeSwap(
+        roomId,
+        incomingTaskInstanceId,
+        selectedTask['taskInstanceId'],
+      );
+    }
+  }
+
+  Future<void> _proposeSwap(
+    String roomId,
+    String targetTaskInstanceId,
+    String offeredTaskInstanceId,
+  ) async {
+    try {
+      await _firestoreService.proposeSwap(
+        roomId: roomId,
+        taskInstanceId: targetTaskInstanceId, // Task I want
+        offeredTaskInstanceId: offeredTaskInstanceId, // Task I give
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Swap proposal sent! Waiting for approval.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error proposing swap: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildTodayTasks(String userId) {
@@ -230,7 +702,19 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
 
         final tasks = snapshot.data ?? [];
 
-        if (tasks.isEmpty) {
+        // Deduplicate: Show only next upcoming instance for each task
+        final uniqueTasks = <Map<String, dynamic>>[];
+        final seenTaskIds = <String>{};
+
+        for (var task in tasks) {
+          final taskId = task['taskId'] as String?;
+          if (taskId != null && !seenTaskIds.contains(taskId)) {
+            seenTaskIds.add(taskId);
+            uniqueTasks.add(task);
+          }
+        }
+
+        if (uniqueTasks.isEmpty) {
           return _buildEmptyState(
             icon: Icons.event_available,
             title: 'No upcoming tasks',
@@ -240,9 +724,9 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: tasks.length,
+          itemCount: uniqueTasks.length,
           itemBuilder: (context, index) {
-            return _buildUpcomingTaskCard(tasks[index], userId);
+            return _buildUpcomingTaskCard(uniqueTasks[index], userId);
           },
         );
       },
@@ -256,6 +740,8 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
     final roomId = taskData['roomId'];
     final taskInstanceId = taskData['taskInstanceId'];
     final swappedWith = taskData['swappedWith'] as Map<String, dynamic>?;
+    final assignedTo = taskData['assignedTo'];
+    final isVolunteer = assignedTo == 'volunteer';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -268,15 +754,28 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
               horizontal: 16,
               vertical: 12,
             ),
-            leading: Checkbox(
-              value: isCompleted,
-              onChanged: (value) {
-                if (value != null) {
-                  _markTaskAsCompleted(roomId, taskInstanceId, value);
-                }
-              },
-              shape: const CircleBorder(),
-            ),
+            leading: isVolunteer
+                ? Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.pan_tool_outlined,
+                      color: Colors.blue,
+                      size: 20,
+                    ),
+                  )
+                : Checkbox(
+                    value: isCompleted,
+                    onChanged: (value) {
+                      if (value != null) {
+                        _markTaskAsCompleted(roomId, taskInstanceId, value);
+                      }
+                    },
+                    shape: const CircleBorder(),
+                  ),
             title: Text(
               title,
               style: TextStyle(
@@ -310,22 +809,39 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: isCompleted ? Colors.green[50] : Colors.orange[50],
+                    color: isCompleted
+                        ? Colors.green[50]
+                        : (isVolunteer ? Colors.blue[50] : Colors.orange[50]),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    isCompleted ? '✓ Completed' : '⏳ Pending',
+                    isCompleted
+                        ? '✓ Completed'
+                        : (isVolunteer ? '✋ Volunteer Needed' : '⏳ Pending'),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: isCompleted
                           ? Colors.green[700]
-                          : Colors.orange[700],
+                          : (isVolunteer
+                                ? Colors.blue[700]
+                                : Colors.orange[700]),
                     ),
                   ),
                 ),
               ],
             ),
+            trailing: isVolunteer
+                ? ElevatedButton(
+                    onPressed: () => _claimTask(roomId, taskInstanceId),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text('Volunteer'),
+                  )
+                : null,
           ),
           // Show swap info if task was swapped
           if (swappedWith != null) ...[
@@ -364,6 +880,8 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
     final swappedWith = taskData['swappedWith'] as Map<String, dynamic>?;
     final roomId = taskData['roomId'];
     final taskInstanceId = taskData['taskInstanceId'];
+    final assignedTo = taskData['assignedTo'];
+    final isVolunteer = assignedTo == 'volunteer';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -376,14 +894,18 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
             leading: Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.primary.withValues(alpha: 0.1),
+                color: isVolunteer
+                    ? Colors.blue[50]
+                    : Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
-                Icons.task_alt,
-                color: Theme.of(context).colorScheme.primary,
+                isVolunteer ? Icons.pan_tool_outlined : Icons.task_alt,
+                color: isVolunteer
+                    ? Colors.blue
+                    : Theme.of(context).colorScheme.primary,
               ),
             ),
             title: Text(
@@ -425,39 +947,58 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
                     ],
                   ),
                 ],
+                if (isVolunteer) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      '✋ Volunteer Needed',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'swap') {
-                  _showSwapDialog(roomId, taskInstanceId, taskData);
-                } else if (value == 'reschedule') {
-                  _showRescheduleDialog(roomId, taskInstanceId);
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'swap',
-                  child: Row(
-                    children: [
-                      Icon(Icons.swap_horiz),
-                      SizedBox(width: 8),
-                      Text('Swap with someone'),
+            trailing: isVolunteer
+                ? ElevatedButton(
+                    onPressed: () => _claimTask(roomId, taskInstanceId),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text('Volunteer'),
+                  )
+                : PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'swap') {
+                        _showSwapDialog(roomId, taskInstanceId, taskData);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'swap',
+                        child: Row(
+                          children: [
+                            Icon(Icons.swap_horiz),
+                            SizedBox(width: 8),
+                            Text('Swap with someone'),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                ),
-                const PopupMenuItem(
-                  value: 'reschedule',
-                  child: Row(
-                    children: [
-                      Icon(Icons.schedule),
-                      SizedBox(width: 8),
-                      Text('Request Reschedule'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
           ),
           // Show swap info if task was swapped
           if (swappedWith != null) ...[
@@ -577,11 +1118,29 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: () =>
-                      _respondToSwapRequest(roomId, taskInstanceId, true),
-                  child: const Text('Approve'),
+                  onPressed: () => _showSwapOfferDialog({
+                    'roomId': roomId,
+                    'taskInstanceId': taskInstanceId,
+                    'title': 'Task',
+                    'swapRequest': swapRequest,
+                  }),
+                  child: const Text('Propose Task'),
                 ),
               ],
+            ),
+          ] else ...[
+            // I am Requester. Show Withdraw.
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => _withdrawSwapRequest(roomId, taskInstanceId),
+                icon: const Icon(Icons.close, size: 16, color: Colors.red),
+                label: const Text(
+                  'Withdraw Request',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
             ),
           ],
         ],
@@ -670,6 +1229,19 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
           children: [
             const Text('Select a member to swap this task with:'),
             const SizedBox(height: 16),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: Icon(Icons.groups_rounded, color: Colors.white),
+              ),
+              title: const Text('Open to All (Anyone can accept)'),
+              subtitle: const Text('Post request to whole room'),
+              onTap: () => Navigator.pop(context, {
+                'uid': 'anyone',
+                'displayName': 'Anyone',
+              }),
+            ),
+            const Divider(),
             ...members
                 .where((m) => m['uid'] != currentUserId)
                 .map(
@@ -691,7 +1263,9 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
         await _firestoreService.createSwapRequest(
           roomId: roomId,
           taskInstanceId: taskInstanceId,
-          targetUserId: selectedMember['uid'],
+          targetUserId: selectedMember['uid'] == 'anyone'
+              ? null
+              : selectedMember['uid'],
         );
 
         if (mounted) {
@@ -712,39 +1286,36 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
     }
   }
 
-  Future<void> _showRescheduleDialog(
-    String roomId,
-    String taskInstanceId,
-  ) async {
-    final selectedDate = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now().add(const Duration(days: 1)),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
+  // ... (keep existing methods)
 
-    if (selectedDate != null) {
-      try {
-        await _firestoreService.requestReschedule(
-          roomId: roomId,
-          taskInstanceId: taskInstanceId,
-          newDate: selectedDate,
+  Future<void> _claimTask(String roomId, String taskInstanceId) async {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(roomId)
+          .collection('taskInstances')
+          .doc(taskInstanceId)
+          .update({'assignedTo': currentUserId});
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Task claimed successfully!'),
+            backgroundColor: Colors.green,
+          ),
         );
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Reschedule request sent!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-          );
-        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error claiming task: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -755,7 +1326,7 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
     bool approve,
   ) async {
     try {
-      await _firestoreService.respondToSwapRequest(
+      await _firestoreService.finalizeSwap(
         roomId: roomId,
         taskInstanceId: taskInstanceId,
         approve: approve,
@@ -766,6 +1337,32 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
           SnackBar(
             content: Text(approve ? 'Swap approved!' : 'Swap rejected'),
             backgroundColor: approve ? Colors.green : Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _withdrawSwapRequest(
+    String roomId,
+    String taskInstanceId,
+  ) async {
+    try {
+      await _firestoreService.withdrawSwapRequest(
+        roomId: roomId,
+        taskInstanceId: taskInstanceId,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Request withdrawn'),
+            backgroundColor: Colors.orange,
           ),
         );
       }

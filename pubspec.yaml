@@ -1,13 +1,13 @@
 name: one_room
 description: "A new Flutter project."
 publish_to: 'none'
-version: 1.0.0+2
+version: 1.0.0+6
 
 environment:
   sdk: ^3.9.0
 
 dependencies:
-  google_mobile_ads: ^4.0.0
+  google_mobile_ads: ^7.0.0
   flutter:
     sdk: flutter
 
@@ -17,14 +17,16 @@ dependencies:
   cloud_firestore: ^5.4.4
   firebase_storage: ^12.3.4
   firebase_messaging: ^15.1.3
-  firebase_app_check: ^0.3.1+4
+  firebase_app_check: ^0.3.2+10
   google_sign_in: ^6.2.2
+  sign_in_with_apple: ^6.1.4
   
   # Notifications
   flutter_local_notifications: ^18.0.1
 
   # State management / utils
   provider: ^6.1.2
+  crypto: ^3.0.3
   intl: ^0.18.1
   image_picker: ^1.0.4
   url_launcher: ^6.1.14
@@ -41,7 +43,13 @@ dependencies:
   # Charts
   fl_chart: ^0.69.0
   qr_flutter: ^4.1.0
-  mobile_scanner: ^5.2.3
+  mobile_scanner: ^7.1.4
+  record: ^6.1.2
+  permission_handler: ^12.0.1
+  audioplayers: ^6.5.1
+  # video and audio
+  video_player: ^2.10.1
+  chewie: ^1.13.0
 
 dev_dependencies:
   flutter_test:
@@ -71,8 +79,8 @@ flutter_native_splash:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/Images/logo.png"
+  image_path: "assets/Images/logo_ios.png" # Updated to full bleed square for iOS
   min_sdk_android: 21
   remove_alpha_ios: true
-  adaptive_icon_foreground: "assets/Images/logo.png"
+  adaptive_icon_foreground: "assets/Images/logo.png" # Keep original for Android Adaptive
   adaptive_icon_background: "#FFFFFF"

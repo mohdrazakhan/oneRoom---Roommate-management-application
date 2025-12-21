@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import '../../providers/auth_provider.dart';
-import '../../services/auth_service.dart';
 import '../../widgets/primary_button.dart';
 import '../../utils/validators.dart';
 import '../../constants.dart';
@@ -23,7 +22,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _loading = false;
-  final _authService = AuthService();
 
   @override
   void dispose() {
@@ -54,7 +52,12 @@ class _LoginScreenState extends State<LoginScreen> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _loading = true);
     try {
-      final user = await _authService.signInWithGoogle();
+      await Provider.of<AuthProvider>(
+        context,
+        listen: false,
+      ).signInWithGoogle();
+      // Auth listener handles the rest
+      final user = firebase_auth.FirebaseAuth.instance.currentUser;
       if (user == null) {
         if (mounted) {
           messenger.showSnackBar(
@@ -108,6 +111,24 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _handleAppleSignIn() async {
+    setState(() => _loading = true);
+    try {
+      await Provider.of<AuthProvider>(context, listen: false).signInWithApple();
+      // Don't navigate manually control listener handles it
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      _showMessage(_firebaseAuthErrorMessage(e));
+    } catch (e) {
+      if (e.toString().contains('SignInWithAppleAuthorizationError')) {
+        // User cancelled or failure
+        return;
+      }
+      _showMessage(e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -129,141 +150,153 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
         ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // App logo
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: Image.asset(
-                    'assets/Images/logo.png',
-                    height: 84,
-                    width: 84,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  AppStrings.appName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 28,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Sign in to continue',
-                  style: TextStyle(color: Colors.grey, fontSize: 16),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                Card(
-                  elevation: 4,
-                  shape: RoundedRectangleBorder(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // App logo
+                  ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _emailCtrl,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: const InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: Icon(Icons.email),
-                            ),
-                            validator: validateEmail,
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passCtrl,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Password',
-                              prefixIcon: Icon(Icons.lock),
-                            ),
-                            validator: validatePassword,
-                          ),
-                          const SizedBox(height: 20),
-                          PrimaryButton(
-                            label: 'Login',
-                            onPressed: _handleLogin,
-                            loading: _loading,
-                            width: double.infinity,
-                          ),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const ForgotPasswordScreen(),
-                                  ),
-                                );
-                              },
-                              child: const Text('Forgot password?'),
-                            ),
-                          ),
-                        ],
-                      ),
+                    child: Image.asset(
+                      'assets/Images/logo.png',
+                      height: 84,
+                      width: 84,
+                      fit: BoxFit.cover,
                     ),
                   ),
-                ),
-                const SizedBox(height: 28),
-                // Social login buttons
-                Column(
-                  children: [
-                    _SocialLoginButton(
-                      icon: Image.asset(
-                        'assets/Images/google_logo.png',
-                        height: 24,
+                  const SizedBox(height: 24),
+                  Text(
+                    AppStrings.appName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 28,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Sign in to continue',
+                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 32),
+                  Card(
+                    elevation: 4,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          children: [
+                            TextFormField(
+                              controller: _emailCtrl,
+                              keyboardType: TextInputType.emailAddress,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                                prefixIcon: Icon(Icons.email),
+                              ),
+                              validator: validateEmail,
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _passCtrl,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Password',
+                                prefixIcon: Icon(Icons.lock),
+                              ),
+                              validator: validatePassword,
+                            ),
+                            const SizedBox(height: 20),
+                            PrimaryButton(
+                              label: 'Login',
+                              onPressed: _handleLogin,
+                              loading: _loading,
+                              width: double.infinity,
+                            ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const ForgotPasswordScreen(),
+                                    ),
+                                  );
+                                },
+                                child: const Text('Forgot password?'),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      label: 'Continue with Google',
-                      onTap: _handleGoogleSignIn,
-                      background: Colors.white,
-                      foreground: Colors.black87,
                     ),
-                    const SizedBox(height: 14),
-                    _SocialLoginButton(
-                      icon: const Icon(Icons.phone_android, size: 24),
-                      label: 'Continue with Phone',
-                      onTap: _handlePhoneSignIn,
-                      background: Theme.of(context).colorScheme.primary,
-                      foreground: Colors.white,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text('Don’t have an account?'),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const SignupScreen(),
-                          ),
-                        );
-                      },
-                      child: const Text(
-                        'Sign up',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 28),
+                  // Social login buttons
+                  Column(
+                    children: [
+                      _SocialLoginButton(
+                        icon: Image.asset(
+                          'assets/Images/google_logo.png',
+                          height: 24,
+                        ),
+                        label: 'Continue with Google',
+                        onTap: _handleGoogleSignIn,
+                        background: Colors.white,
+                        foreground: Colors.black87,
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                      const SizedBox(height: 16), // Unified spacing
+                      if (Theme.of(context).platform == TargetPlatform.iOS) ...[
+                        _SocialLoginButton(
+                          icon: const Icon(Icons.apple, size: 24),
+                          label: 'Continue with Apple',
+                          onTap: _handleAppleSignIn,
+                          background: Colors.black,
+                          foreground: Colors.white,
+                        ),
+                        const SizedBox(height: 16), // Unified spacing
+                      ],
+                      _SocialLoginButton(
+                        icon: const Icon(Icons.phone_android, size: 24),
+                        label: 'Continue with Phone',
+                        onTap: _handlePhoneSignIn,
+                        background: Theme.of(context).colorScheme.primary,
+                        foreground: Colors.white,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('Don’t have an account?'),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const SignupScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text(
+                          'Sign up',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),

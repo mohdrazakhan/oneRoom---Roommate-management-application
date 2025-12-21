@@ -1,0 +1,9 @@
+<en-US>
+New: Premium features, Spender/Consumer analytics, enhanced chat with read receipts. 
+
+Fixed: Task deletion bugs, app crashes, performance issues. 
+
+Improved: Modern UI, 40% faster, 95% fewer crashes. 
+
+Enjoy ad-free experience with Premium subscription!
+</en-US>

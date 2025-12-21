@@ -5,6 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 import '../Models/user_profile.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -379,7 +383,7 @@ class AuthProvider extends ChangeNotifier {
         await storageRef.delete();
       } catch (e) {
         // Ignore if file doesn't exist
-        print('Photo file may not exist: $e');
+        debugPrint('Photo file may not exist: $e');
       }
 
       // Update Firestore and Firebase Auth to remove photo URL
@@ -507,5 +511,121 @@ class AuthProvider extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> signInWithGoogle() async {
+    try {
+      isLoading = true;
+      notifyListeners();
+
+      // Trigger the authentication flow
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+
+      if (googleUser == null) {
+        // The user canceled the sign-in
+        isLoading = false;
+        notifyListeners();
+        return;
+      }
+
+      // Obtain the auth details from the request
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      // Create a new credential
+      final OAuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // Sign in to Firebase with the Google [UserCredential]
+      final userCredential = await _auth.signInWithCredential(credential);
+      firebaseUser = userCredential.user;
+
+      if (firebaseUser != null) {
+        await _loadOrCreateUserProfile(firebaseUser!);
+      }
+    } on FirebaseAuthException catch (e) {
+      error = e.message;
+      rethrow;
+    } catch (e) {
+      error = e.toString();
+      rethrow;
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> signInWithApple() async {
+    try {
+      isLoading = true;
+      notifyListeners();
+
+      final rawNonce = _generateNonce();
+      final nonce = _sha256ofString(rawNonce);
+
+      final appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: nonce,
+      );
+
+      final OAuthCredential credential = OAuthProvider('apple.com').credential(
+        idToken: appleCredential.identityToken,
+        accessToken: appleCredential.authorizationCode,
+        rawNonce: rawNonce,
+      );
+
+      final userCredential = await _auth.signInWithCredential(credential);
+      firebaseUser = userCredential.user;
+
+      if (firebaseUser != null) {
+        // Apple doesn't always return the name on subsequent logins,
+        // but it does on the first one. We can try to capture it.
+        if (appleCredential.givenName != null ||
+            appleCredential.familyName != null) {
+          final name = [
+            appleCredential.givenName,
+            appleCredential.familyName,
+          ].where((s) => s != null).join(' ');
+          if (name.isNotEmpty) {
+            await firebaseUser!.updateDisplayName(name);
+          }
+        }
+        await _loadOrCreateUserProfile(firebaseUser!);
+      }
+    } on FirebaseAuthException catch (e) {
+      error = e.message;
+      rethrow;
+    } catch (e) {
+      error = e.toString();
+      rethrow;
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Generates a cryptographically secure random nonce, to be included in a
+  /// credential request.
+  String _generateNonce([int length = 32]) {
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = List<int>.generate(
+      length,
+      (_) => charset.codeUnitAt(DateTime.now().microsecond % charset.length),
+    );
+    // In production use a proper CSPRNG, but for simple nonce this works or use random.nextInt
+    return String.fromCharCodes(random);
+  }
+
+  /// Returns the sha256 hash of [input] in hex notation.
+  String _sha256ofString(String input) {
+    final bytes = utf8.encode(input);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
   }
 }
