@@ -1,8 +1,11 @@
 // ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart'; // Added for date formatting
 import '../../widgets/safe_web_image.dart';
+import '../../widgets/ad_banner_widget.dart';
 import '../../Models/room.dart';
+import '../../Models/expense.dart'; // Added for Expense model
 import '../../services/firestore_service.dart';
 
 class ExpenseAnalyticsScreen extends StatefulWidget {
@@ -24,6 +27,11 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
   bool _isLoading = true;
   int _touchedIndex = -1;
   bool _showBySpender = true; // Toggle state for breakdown
+
+  // Date filtering
+  DateTime? _selectedMonth; // null = All Time
+  List<DateTime> _availableMonths = [];
+  List<Expense> _allExpenses = [];
 
   // Color palette for charts
   final List<Color> _chartColors = [
@@ -55,44 +63,23 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
           .getExpenses(widget.room.id)
           .first;
 
-      // Calculate totals by member (Spending)
-      final Map<String, double> expensesByMember = {};
-      final Map<String, double> consumedByMember = {};
-
-      for (final expense in expenses) {
-        // Spending
-        String payerKey = expense.paidBy;
-        if (payerKey.startsWith('guest_')) {
-          payerKey = 'guests_aggregate';
-        }
-
-        expensesByMember[payerKey] =
-            (expensesByMember[payerKey] ?? 0.0) + expense.amount;
-
-        // Consumption
-        if (expense.splits.isNotEmpty) {
-          expense.splits.forEach((uid, amount) {
-            String consumerKey = uid;
-            if (consumerKey.startsWith('guest_')) {
-              consumerKey = 'guests_aggregate';
-            }
-            consumedByMember[consumerKey] =
-                (consumedByMember[consumerKey] ?? 0.0) + amount;
-          });
-        }
+      final Set<DateTime> months = {};
+      for (var e in expenses) {
+        months.add(DateTime(e.createdAt.year, e.createdAt.month));
       }
-
-      final total = expenses.fold<double>(0.0, (sum, exp) => sum + exp.amount);
+      final sortedMonths = months.toList()..sort((a, b) => b.compareTo(a));
 
       if (mounted) {
         setState(() {
           _memberProfiles = profiles;
-          _memberExpenses = expensesByMember;
-          _memberConsumed = consumedByMember;
-          _totalExpenditure = total;
-          _totalTransactions = expenses.length;
-          _isLoading = false;
+          _allExpenses = expenses;
+          _availableMonths = sortedMonths;
+          // select latest month by default if available, or keep null for all time
+          // User asked for "like January, February", so maybe defaulting to current/latest month is better UI?
+          // But "All Time" is a good default for analytics. I'll stick to All Time (null) for now or let user choose.
+          // _selectedMonth = sortedMonths.isNotEmpty ? sortedMonths.first : null;
         });
+        _calculateStats();
       }
     } catch (e) {
       print('❌ Error loading analytics data: $e');
@@ -100,6 +87,58 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _calculateStats() {
+    final filteredExpenses = _selectedMonth == null
+        ? _allExpenses
+        : _allExpenses
+              .where(
+                (e) =>
+                    e.createdAt.year == _selectedMonth!.year &&
+                    e.createdAt.month == _selectedMonth!.month,
+              )
+              .toList();
+
+    // Calculate totals by member (Spending)
+    final Map<String, double> expensesByMember = {};
+    final Map<String, double> consumedByMember = {};
+
+    for (final expense in filteredExpenses) {
+      // Spending
+      String payerKey = expense.paidBy;
+      if (payerKey.startsWith('guest_')) {
+        payerKey = 'guests_aggregate';
+      }
+
+      expensesByMember[payerKey] =
+          (expensesByMember[payerKey] ?? 0.0) + expense.amount;
+
+      // Consumption
+      if (expense.splits.isNotEmpty) {
+        expense.splits.forEach((uid, amount) {
+          String consumerKey = uid;
+          if (consumerKey.startsWith('guest_')) {
+            consumerKey = 'guests_aggregate';
+          }
+          consumedByMember[consumerKey] =
+              (consumedByMember[consumerKey] ?? 0.0) + amount;
+        });
+      }
+    }
+
+    final total = filteredExpenses.fold<double>(
+      0.0,
+      (sum, exp) => sum + exp.amount,
+    );
+
+    setState(() {
+      _memberExpenses = expensesByMember;
+      _memberConsumed = consumedByMember;
+      _totalExpenditure = total;
+      _totalTransactions = filteredExpenses.length;
+      _isLoading = false;
+    });
   }
 
   String _getMemberDisplayName(String uid) {
@@ -188,6 +227,11 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
             : ListView(
                 padding: const EdgeInsets.all(20),
                 children: [
+                  // Month Selector
+                  _buildMonthSelector(),
+
+                  const SizedBox(height: 16),
+
                   // Total Summary Card
                   _buildTotalSummaryCard(),
 
@@ -508,7 +552,7 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
               ),
             ),
 
-          ...sortedEntries.asMap().entries.map((entry) {
+          ...sortedEntries.asMap().entries.expand((entry) {
             final index = entry.key;
             final memberEntry = entry.value;
             final memberName = _getMemberDisplayName(memberEntry.key);
@@ -521,7 +565,7 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
             final percentage = (amount / _totalExpenditure) * 100;
             final color = _getMemberColor(index);
 
-            return Column(
+            final row = Column(
               children: [
                 if (index > 0) const Divider(height: 24),
                 Row(
@@ -675,9 +719,56 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
                 ),
               ],
             );
+
+            final adInsertIndex = sortedEntries.length > 2 ? 1 : 0;
+            if (index == adInsertIndex) {
+              return <Widget>[row, _buildSponsoredMemberAdRow()];
+            }
+            return <Widget>[row];
           }),
         ],
       ),
+    );
+  }
+
+  Widget _buildSponsoredMemberAdRow() {
+    return Column(
+      children: [
+        const Divider(height: 24),
+        Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.2),
+                shape: BoxShape.circle,
+              ),
+              child: const Center(
+                child: Icon(
+                  Icons.campaign_rounded,
+                  size: 16,
+                  color: Colors.orange,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              'Sponsored',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: const AdBannerWidget(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -712,6 +803,82 @@ class _ExpenseAnalyticsScreenState extends State<ExpenseAnalyticsScreen> {
             'Add expenses to see analytics',
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthSelector() {
+    if (_availableMonths.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          // All Time
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: const Text('All Time'),
+              selected: _selectedMonth == null,
+              onSelected: (selected) {
+                if (selected && _selectedMonth != null) {
+                  setState(() => _selectedMonth = null);
+                  _calculateStats();
+                }
+              },
+              side: BorderSide.none,
+              backgroundColor: Colors.white,
+              selectedColor: Theme.of(
+                context,
+              ).colorScheme.primary.withValues(alpha: 0.2),
+              labelStyle: TextStyle(
+                color: _selectedMonth == null
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.grey[600],
+                fontWeight: _selectedMonth == null
+                    ? FontWeight.bold
+                    : FontWeight.normal,
+              ),
+            ),
+          ),
+          // Months
+          ..._availableMonths.map((date) {
+            final label = DateFormat('MMMM yyyy').format(date);
+            final isSelected =
+                _selectedMonth != null &&
+                _selectedMonth!.year == date.year &&
+                _selectedMonth!.month == date.month;
+
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                label: Text(label),
+                selected: isSelected,
+                onSelected: (selected) {
+                  if (selected) {
+                    setState(() => _selectedMonth = date);
+                    _calculateStats();
+                  } else {
+                    setState(() => _selectedMonth = null);
+                    _calculateStats();
+                  }
+                },
+                side: BorderSide.none,
+                backgroundColor: Colors.white,
+                selectedColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.2),
+                labelStyle: TextStyle(
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.grey[600],
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            );
+          }),
         ],
       ),
     );

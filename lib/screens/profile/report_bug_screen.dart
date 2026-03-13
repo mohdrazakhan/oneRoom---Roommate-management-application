@@ -1,11 +1,11 @@
 // lib/screens/profile/report_bug_screen.dart
-import 'dart:io';
-
+import 'package:flutter/foundation.dart'; // kIsWeb
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'dart:io' show File; // For non-web
 
 class ReportBugScreen extends StatefulWidget {
   const ReportBugScreen({super.key});
@@ -114,7 +114,16 @@ class _ReportBugScreenState extends State<ReportBugScreen> {
         final ref = FirebaseStorage.instance.ref().child(
           'bug_reports/${uid ?? 'anonymous'}/$timestamp/$fileName',
         );
-        final uploadTask = await ref.putFile(File(file.path));
+
+        // Use getData() for universal support instead of putFile
+        final bytes = await file.readAsBytes();
+        final metadata = SettableMetadata(
+          contentType:
+              file.mimeType ??
+              (fileName.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
+        );
+        final uploadTask = await ref.putData(bytes, metadata);
+
         final url = await uploadTask.ref.getDownloadURL();
         attachmentUrls.add({
           'name': fileName,
@@ -372,6 +381,16 @@ class _ReportBugScreenState extends State<ReportBugScreen> {
         ),
       );
     }
+
+    if (kIsWeb) {
+      return Image.network(
+        file.path,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) =>
+            const Center(child: Icon(Icons.broken_image_rounded)),
+      );
+    }
+
     return Image.file(
       File(file.path),
       fit: BoxFit.cover,

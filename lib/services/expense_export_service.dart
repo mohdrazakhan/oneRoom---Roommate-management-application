@@ -1,4 +1,9 @@
-import 'dart:io';
+// lib/services/expense_export_service.dart
+// import 'dart:io'; // Removed for web support
+import 'dart:io'
+    show
+        File; // Only for non-web usage if needed, but better to avoid strict ref
+import 'package:flutter/foundation.dart'; // kIsWeb
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
@@ -228,17 +233,33 @@ class ExpenseExportService {
     );
 
     // Save and share PDF
-    final output = await getTemporaryDirectory();
-    final file = File(
-      '${output.path}/expense_summary_${DateTime.now().millisecondsSinceEpoch}.pdf',
-    );
-    await file.writeAsBytes(await pdf.save());
+    final bytes = await pdf.save();
 
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      subject: 'Expense Summary - $roomName',
-      text: 'Expense summary for $roomName',
-    );
+    if (kIsWeb) {
+      await Share.shareXFiles(
+        [
+          XFile.fromData(
+            bytes,
+            name: 'expense_summary.pdf',
+            mimeType: 'application/pdf',
+          ),
+        ],
+        subject: 'Expense Summary - $roomName',
+        text: 'Expense summary for $roomName',
+      );
+    } else {
+      final output = await getTemporaryDirectory();
+      final file = File(
+        '${output.path}/expense_summary_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      );
+      await file.writeAsBytes(bytes);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: 'Expense Summary - $roomName',
+        text: 'Expense summary for $roomName',
+      );
+    }
   }
 
   /// Generate Excel for expense transactions
@@ -331,19 +352,37 @@ class ExpenseExportService {
     }
 
     // Save and share Excel
-    final output = await getTemporaryDirectory();
-    final file = File(
-      '${output.path}/expense_summary_${DateTime.now().millisecondsSinceEpoch}.xlsx',
-    );
     final bytes = excel.encode();
     if (bytes != null) {
-      await file.writeAsBytes(bytes);
+      // excel.encode() returns List<int>, need generic Uint8List for XFile if possible or just List<int>
+      final uint8Bytes = Uint8List.fromList(bytes);
 
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        subject: 'Expense Summary - $roomName',
-        text: 'Expense summary for $roomName',
-      );
+      if (kIsWeb) {
+        await Share.shareXFiles(
+          [
+            XFile.fromData(
+              uint8Bytes,
+              name: 'expense_summary.xlsx',
+              mimeType:
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ),
+          ],
+          subject: 'Expense Summary - $roomName',
+          text: 'Expense summary for $roomName',
+        );
+      } else {
+        final output = await getTemporaryDirectory();
+        final file = File(
+          '${output.path}/expense_summary_${DateTime.now().millisecondsSinceEpoch}.xlsx',
+        );
+        await file.writeAsBytes(bytes);
+
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          subject: 'Expense Summary - $roomName',
+          text: 'Expense summary for $roomName',
+        );
+      }
     }
   }
 

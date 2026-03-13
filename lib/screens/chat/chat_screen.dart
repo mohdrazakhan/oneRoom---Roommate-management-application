@@ -1,5 +1,6 @@
 // lib/screens/chat/chat_screen.dart
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
+import 'package:flutter/foundation.dart'; // kIsWeb
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -503,7 +504,7 @@ class _ChatScreenState extends State<ChatScreen> {
       maxWidth: 1024,
     );
     if (x == null) return;
-    _sendMediaFile(File(x.path), 'image');
+    _sendMediaFile(x, 'image');
   }
 
   Future<void> _toggleRecording() async {
@@ -512,13 +513,20 @@ class _ChatScreenState extends State<ChatScreen> {
         final path = await _audioRecorder.stop();
         setState(() => _isRecording = false);
         if (path != null) {
-          _sendMediaFile(File(path), 'audio');
+          _sendMediaFile(XFile(path), 'audio');
         }
       } else {
         if (await _audioRecorder.hasPermission()) {
-          final tempDir = await getTemporaryDirectory();
-          final path =
-              '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          // Path handling for web vs mobile
+          String path;
+          if (kIsWeb) {
+            // For web, path is ignored by some recorders or handled differently
+            path = ''; // let backend handle or use automatic
+          } else {
+            final tempDir = await getTemporaryDirectory();
+            path =
+                '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          }
 
           // Optimize for voice: AAC Low Complexity, 32kbps, 16kHz sample rate
           // This drastically reduces file size (~1MB/min -> ~0.2MB/min) making uploads much faster.
@@ -528,7 +536,14 @@ class _ChatScreenState extends State<ChatScreen> {
             sampleRate: 16000,
           );
 
-          await _audioRecorder.start(config, path: path);
+          if (kIsWeb) {
+            // Web specific start (writes to blob usually, returned path is blob url)
+            // We can pass a StreamController to stream as well, but simple path start is easiest
+            // The recorder usually returns a Blob URL on stop for web.
+            await _audioRecorder.start(config, path: '');
+          } else {
+            await _audioRecorder.start(config, path: path);
+          }
           setState(() => _isRecording = true);
         } else {
           if (!mounted) return;
@@ -570,7 +585,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   if (x == null) return;
                   final ext = _extFromPath(x.path).toLowerCase();
                   final isVideo = ['mp4', 'mov', 'avi', 'mkv'].contains(ext);
-                  _sendMediaFile(File(x.path), isVideo ? 'video' : 'image');
+                  _sendMediaFile(x, isVideo ? 'video' : 'image');
                 } catch (e) {
                   if (!mounted) return;
                   ScaffoldMessenger.of(
@@ -600,11 +615,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pickAudioFile() async {
     final res = await FilePicker.platform.pickFiles(type: FileType.audio);
-    if (res == null || res.files.single.path == null) return;
-    _sendMediaFile(File(res.files.single.path!), 'audio');
+    if (res == null) return;
+
+    // Web: path might be null, use bytes or create XFile from data
+    if (kIsWeb) {
+      if (res.files.single.bytes != null) {
+        final xfile = XFile.fromData(
+          res.files.single.bytes!,
+          name: res.files.single.name,
+        );
+        _sendMediaFile(xfile, 'audio');
+      }
+    } else {
+      if (res.files.single.path != null) {
+        _sendMediaFile(XFile(res.files.single.path!), 'audio');
+      }
+    }
   }
 
-  Future<void> _sendMediaFile(File file, String kind) async {
+  Future<void> _sendMediaFile(XFile file, String kind) async {
     setState(() => _sending = true);
     try {
       final ext = _extFromPath(file.path);

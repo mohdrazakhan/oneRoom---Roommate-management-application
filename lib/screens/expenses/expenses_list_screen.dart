@@ -1,3 +1,6 @@
+import 'dart:async'; // Added for Timer
+import 'package:intl/intl.dart';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -14,6 +17,8 @@ import 'payment_history_screen.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/subscription_service.dart';
 import '../../services/expense_export_service.dart';
+import '../../widgets/ad_banner_widget.dart';
+import '../../widgets/video_ad_dialog.dart';
 
 class ExpensesListScreen extends StatefulWidget {
   final String roomId;
@@ -31,16 +36,88 @@ class ExpensesListScreen extends StatefulWidget {
 
 class _ExpensesListScreenState extends State<ExpensesListScreen> {
   String? _selectedCategory; // null = All
+  DateTimeRange? _selectedDateRange;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  Timer? _debounce;
+
+  late final FirestoreService _fs;
+  late final Stream<Map<String, dynamic>?> _roomStream;
+  late final Stream<List<Map<String, dynamic>>> _expensesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _fs = FirestoreService();
+    _roomStream = _fs.streamRoomById(widget.roomId);
+    _expensesStream = _fs.expensesForRoom(widget.roomId);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      setState(() {
+        _searchQuery = query;
+      });
+    });
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final theme = Theme.of(context);
+
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: now.add(const Duration(days: 365)),
+      initialDateRange: _selectedDateRange,
+      builder: (context, child) {
+        return Theme(
+          data: theme.copyWith(
+            appBarTheme: theme.appBarTheme.copyWith(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              elevation: 0,
+            ),
+            colorScheme: theme.colorScheme.copyWith(
+              surface: Colors.white,
+              primary: theme.colorScheme.primary,
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+              secondaryContainer: theme.colorScheme.primary.withValues(
+                alpha: 0.1,
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
+      saveText: 'Save',
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDateRange = picked;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final fs = FirestoreService();
     final uid = Provider.of<AuthProvider>(
       context,
       listen: false,
     ).firebaseUser?.uid;
 
-    return Scaffold(
+    return Stack(
+      children: [
+      Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         elevation: 0,
@@ -117,7 +194,7 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
         ],
       ),
       body: StreamBuilder<Map<String, dynamic>?>(
-        stream: fs.streamRoomById(widget.roomId),
+        stream: _roomStream,
         builder: (context, roomSnap) {
           final roomData = roomSnap.data;
           List<ExpenseCategory> customCategories = [];
@@ -141,7 +218,7 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
           ];
 
           return StreamBuilder<List<Map<String, dynamic>>>(
-            stream: fs.expensesForRoom(widget.roomId),
+            stream: _expensesStream,
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -151,213 +228,389 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
                   .map((m) => Expense.fromMap(m, m['id']))
                   .toList();
 
+              // Filter by category if selected and search query and date range
+              final expenses = allExpenses.where((e) {
+                final matchesCategory =
+                    _selectedCategory == null ||
+                    e.category == _selectedCategory;
+
+                final matchesSearch =
+                    _searchQuery.isEmpty ||
+                    e.description.toLowerCase().contains(
+                      _searchQuery.toLowerCase(),
+                    ) ||
+                    e.amount.toString().contains(_searchQuery);
+
+                bool matchesDate = true;
+                if (_selectedDateRange != null) {
+                  final start = _selectedDateRange!.start.copyWith(
+                    hour: 0,
+                    minute: 0,
+                    second: 0,
+                    millisecond: 0,
+                    microsecond: 0,
+                  );
+                  final end = _selectedDateRange!.end.copyWith(
+                    hour: 23,
+                    minute: 59,
+                    second: 59,
+                    millisecond: 999,
+                    microsecond: 999,
+                  );
+                  matchesDate =
+                      e.createdAt.isAfter(
+                        start.subtract(const Duration(milliseconds: 1)),
+                      ) &&
+                      e.createdAt.isBefore(
+                        end.add(const Duration(milliseconds: 1)),
+                      );
+                }
+
+                return matchesCategory && matchesSearch && matchesDate;
+              }).toList();
+
               double total = 0;
-              for (final e in allExpenses) {
+              for (final e in expenses) {
                 total += e.amount;
               }
 
-              // Filter by category if selected
-              final expenses = _selectedCategory == null
-                  ? allExpenses
-                  : allExpenses
-                        .where((e) => e.category == _selectedCategory)
-                        .toList();
+              return CustomScrollView(
+                slivers: [
+                  // Search Bar
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search expenses...',
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    _onSearchChanged('');
+                                    FocusScope.of(context).unfocus();
+                                  },
+                                )
+                              : null,
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 0,
+                            horizontal: 20,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide(
+                              color: Theme.of(context).primaryColor,
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                        onChanged: (val) {
+                          setState(() {});
+                          _onSearchChanged(val);
+                        },
+                      ),
+                    ),
+                  ),
 
-              return Column(
-                children: [
-                  // Modern Total Card
-                  Container(
-                    margin: const EdgeInsets.all(16),
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Theme.of(context).colorScheme.primary,
-                          Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.8),
+                  // Total Card
+                  SliverToBoxAdapter(
+                    child: Container(
+                      margin: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Theme.of(context).colorScheme.primary,
+                            Theme.of(
+                              context,
+                            ).colorScheme.primary.withValues(alpha: 0.8),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primary.withValues(alpha: 0.3),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
+                          ),
                         ],
                       ),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Total Expenses',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                            ],
+                          ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppStrings.currencySymbol,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                total.toStringAsFixed(2),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  ),
+
+                  // Filter Chips
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: 60,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        children: [
+                          // Date Filter Chip
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              label: Row(
+                                children: [
+                                  const Icon(Icons.date_range, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _selectedDateRange == null
+                                        ? 'Date'
+                                        : '${DateFormat('dd/MM').format(_selectedDateRange!.start)} - ${DateFormat('dd/MM').format(_selectedDateRange!.end)}',
+                                    style: TextStyle(
+                                      fontWeight: _selectedDateRange != null
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              selected: _selectedDateRange != null,
+                              onSelected: (selected) {
+                                if (!selected) {
+                                  setState(() => _selectedDateRange = null);
+                                } else {
+                                  _pickDateRange();
+                                }
+                              },
+                              backgroundColor: Colors.white,
+                              selectedColor: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.2),
+                              checkmarkColor: Theme.of(
+                                context,
+                              ).colorScheme.primary,
+                            ),
+                          ),
+                          // All Filter
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              label: const Row(
+                                children: [
+                                  Icon(Icons.all_inclusive, size: 16),
+                                  SizedBox(width: 4),
+                                  Text('All'),
+                                ],
+                              ),
+                              selected: _selectedCategory == null,
+                              onSelected: (_) {
+                                setState(() => _selectedCategory = null);
+                              },
+                              backgroundColor: Colors.white,
+                              selectedColor: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.2),
+                              checkmarkColor: Theme.of(
+                                context,
+                              ).colorScheme.primary,
+                            ),
+                          ),
+                          // Categories
+                          ...allCategories.map(
+                            (cat) => Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: FilterChip(
+                                label: Text('${cat.icon} ${cat.name}'),
+                                selected: _selectedCategory == cat.name,
+                                onSelected: (sel) {
+                                  setState(
+                                    () => _selectedCategory = sel
+                                        ? cat.name
+                                        : null,
+                                  );
+                                },
+                                backgroundColor: Colors.white,
+                                selectedColor: Color(
+                                  cat.colorValue,
+                                ).withValues(alpha: 0.2),
+                                checkmarkColor: Color(cat.colorValue),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SliverToBoxAdapter(child: SizedBox(height: 8)),
+
+                  // Expenses List or Empty State
+                  if (expenses.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            Icon(
+                              _searchQuery.isNotEmpty
+                                  ? Icons.search_off
+                                  : Icons.receipt_long_outlined,
+                              size: 80,
+                              color: Colors.grey[300],
+                            ),
+                            const SizedBox(height: 16),
                             Text(
-                              'Total Expenses',
+                              _searchQuery.isNotEmpty
+                                  ? 'No matching expenses'
+                                  : 'No expenses yet',
                               style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 14,
+                                fontSize: 18,
+                                color: Colors.grey[600],
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
-                            SizedBox(height: 4),
+                            const SizedBox(height: 8),
+                            if (_searchQuery.isEmpty)
+                              Text(
+                                'Tap + to add your first expense',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[500],
+                                ),
+                              ),
                           ],
                         ),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppStrings.currencySymbol,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.only(bottom: 80),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate((context, i) {
+                          final e = expenses[i];
+                          // Find category object
+                          final catObj = allCategories.firstWhere(
+                            (c) => c.name == e.category,
+                            orElse: () => ExpenseCategory(
+                              name: e.category,
+                              icon: '🏷️',
+                              colorValue: 0xFF9E9E9E,
                             ),
-                            Text(
-                              total.toStringAsFixed(2),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Category filter chips
-                  SizedBox(
-                    height: 60,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: FilterChip(
-                            label: const Row(
-                              children: [
-                                Icon(Icons.all_inclusive, size: 16),
-                                SizedBox(width: 4),
-                                Text('All'),
-                              ],
-                            ),
-                            selected: _selectedCategory == null,
-                            onSelected: (_) {
-                              setState(() => _selectedCategory = null);
-                            },
-                            backgroundColor: Colors.white,
-                            selectedColor: Theme.of(
-                              context,
-                            ).colorScheme.primary.withValues(alpha: 0.2),
-                            checkmarkColor: Theme.of(
-                              context,
-                            ).colorScheme.primary,
-                          ),
-                        ),
-                        ...allCategories.map(
-                          (cat) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: FilterChip(
-                              label: Text('${cat.icon} ${cat.name}'),
-                              selected: _selectedCategory == cat.name,
-                              onSelected: (sel) {
-                                setState(
-                                  () =>
-                                      _selectedCategory = sel ? cat.name : null,
-                                );
-                              },
-                              backgroundColor: Colors.white,
-                              selectedColor: Color(
-                                cat.colorValue,
-                              ).withValues(alpha: 0.2),
-                              checkmarkColor: Color(cat.colorValue),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: expenses.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.receipt_long_outlined,
-                                  size: 80,
-                                  color: Colors.grey[300],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No expenses yet',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    color: Colors.grey[600],
-                                    fontWeight: FontWeight.w500,
+                          );
+
+                          return ExpenseCard(
+                            expense: e,
+                            roomId: widget.roomId,
+                            currentUserUid: uid,
+                            highlightIfPaidByMe: true,
+                            customCategory: catObj,
+                            onTap: () => _showExpenseDetailPopup(context, e),
+                            onDelete: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Delete Expense?'),
+                                  content: const Text(
+                                    'Are you sure you want to delete this expense? This action cannot be undone.',
                                   ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Tap + to add your first expense',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[500],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.only(bottom: 80),
-                            itemCount: expenses.length,
-                            itemBuilder: (context, i) {
-                              final e = expenses[i];
-                              // Find category object to ensure custom emoji is used
-                              final catObj = allCategories.firstWhere(
-                                (c) => c.name == e.category,
-                                orElse: () => ExpenseCategory(
-                                  name: e.category,
-                                  icon: '🏷️',
-                                  colorValue: 0xFF9E9E9E,
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(ctx, false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: Colors.red,
+                                      ),
+                                      child: const Text('Delete'),
+                                    ),
+                                  ],
                                 ),
                               );
 
-                              return ExpenseCard(
-                                expense: e,
-                                roomId: widget.roomId,
-                                currentUserUid: uid,
-                                highlightIfPaidByMe: true,
-                                customCategory: catObj,
-                                onTap: () =>
-                                    _showExpenseDetailPopup(context, e),
-                                onDelete: () async {
-                                  await fs.deleteExpense(widget.roomId, e.id);
-                                },
-                              );
+                              if (confirm == true) {
+                                await _fs.deleteExpense(widget.roomId, e.id);
+                              }
                             },
-                          ),
-                  ),
+                          );
+                        }, childCount: expenses.length),
+                      ),
+                    ),
                 ],
               );
             },
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          _showExpenseOptionsMenu(context);
-        },
-        elevation: 8,
-        child: const Icon(Icons.add_rounded, size: 28),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 56),
+        child: FloatingActionButton(
+          onPressed: () {
+            _showExpenseOptionsMenu(context);
+          },
+          elevation: 8,
+          child: const Icon(Icons.add_rounded, size: 28),
+        ),
       ),
+    ),
+    // Bottom Ad Banner
+    const Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: AdBannerWidget(),
+    ),
+    ],
     );
   }
 
@@ -479,6 +732,15 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
       return;
     }
 
+    // Show video ad first, then show export options
+    if (!context.mounted) return;
+    await showVideoAd(context, onComplete: () async {
+      if (!mounted) return;
+      await _showExportOptions(context);
+    });
+  }
+
+  Future<void> _showExportOptions(BuildContext context) async {
     // Show export options
     await showModalBottomSheet(
       context: context,

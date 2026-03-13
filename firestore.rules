@@ -1,6 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // --- WEBSITE STATS RULES ---
+    match /appStats/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Allow collection group queries on taskInstances where the caller is the assignee
     // This ensures collectionGroup reads don't fail due to membership checks
     match /{path=**}/taskInstances/{instanceId} {
@@ -16,6 +22,17 @@ service cloud.firestore {
     function isMemberOfRoom(roomId) {
       return isSignedIn() && 
              request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.members;
+    }
+
+    function isCreatorOfRoom(roomId) {
+      return isSignedIn() &&
+             request.auth.uid == get(/databases/$(database)/documents/rooms/$(roomId)).data.createdBy;
+    }
+
+    function isFinalMemberOfRoom(roomId) {
+      return isSignedIn() &&
+             request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.members &&
+             get(/databases/$(database)/documents/rooms/$(roomId)).data.members.size() <= 1;
     }
     
     // Users collection
@@ -33,6 +50,24 @@ service cloud.firestore {
       // FCM tokens subcollection (for push notifications)
       match /tokens/{tokenId} {
         // Users can read, create, update, and delete their own tokens
+        allow read, create, update, delete: if isSignedIn() && request.auth.uid == userId;
+      }
+      
+      // Personal Expenses subcollection (Personal Tracker)
+      match /personal_expenses/{expenseId} {
+        // Users can full access their own personal expenses
+        allow read, create, update, delete: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // Udhar Transactions subcollection (Debt Tracker)
+      match /udhar_transactions/{udharId} {
+        // Users can full access their own transactions
+        allow read, create, update, delete: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // Fixed Monthly Bills subcollection
+      match /fixed_bills/{billId} {
+        // Users can full access their own bills
         allow read, create, update, delete: if isSignedIn() && request.auth.uid == userId;
       }
     }
@@ -56,8 +91,15 @@ service cloud.firestore {
          request.resource.data.members.size() == resource.data.members.size() + 1)
       );
       
-      // Only creator can delete the room
-      allow delete: if isSignedIn() && request.auth.uid == resource.data.createdBy;
+      // Creator can delete anytime, or the final remaining member can delete
+      // so orphaned trips are permanently removed.
+      allow delete: if isSignedIn() && (
+        request.auth.uid == resource.data.createdBy ||
+        (
+          request.auth.uid in resource.data.members &&
+          resource.data.members.size() <= 1
+        )
+      );
       
       // Expenses subcollection
       match /expenses/{expenseId} {
@@ -139,6 +181,20 @@ service cloud.firestore {
         allow update: if false;
       }
 
+      // Trip media subcollection (shared photos/videos)
+      match /media/{mediaId} {
+        allow read, create: if isMemberOfRoom(roomId);
+        // Only room creator can delete media
+        allow delete: if isCreatorOfRoom(roomId);
+        allow update: if false;
+      }
+
+      // Room points/transactions
+      match /pointTransactions/{transactionId} {
+        allow read, create: if isMemberOfRoom(roomId);
+        allow update, delete: if false;
+      }
+
       // Task instances subcollection (scheduled task occurrences)
       match /taskInstances/{instanceId} {
         // Members can create task instances
@@ -159,6 +215,8 @@ service cloud.firestore {
         allow delete: if isMemberOfRoom(roomId);
       }
 
+
+
       // Immutable Activity/Audit Log subcollection
       // - Members of the room can read all audit events for transparency
       // - Only members can CREATE new entries (app writes on add/edit/delete)
@@ -166,7 +224,16 @@ service cloud.firestore {
       match /auditLog/{logId} {
         allow read: if isMemberOfRoom(roomId);
         allow create: if isMemberOfRoom(roomId);
-        allow update, delete: if false;
+        // Allow creator/final member cleanup during permanent room deletion
+        allow delete: if isCreatorOfRoom(roomId) || isFinalMemberOfRoom(roomId);
+        allow update: if false;
+      }
+
+      // Optional notifications subcollection under room (cleanup-safe)
+      match /notifications/{notificationId} {
+        allow read, create: if isMemberOfRoom(roomId);
+        allow update: if false;
+        allow delete: if isCreatorOfRoom(roomId) || isFinalMemberOfRoom(roomId);
       }
     }
     

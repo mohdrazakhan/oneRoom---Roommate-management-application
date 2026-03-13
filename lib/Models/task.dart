@@ -59,6 +59,9 @@ class Task {
   final List<int>? weekDays; // For weekly: 1=Mon, 7=Sun
   final int? monthDay; // For monthly: 1-31
   final int? repeatInterval; // For custom: every X days
+  final int completionPoints;
+  final int volunteerPoints;
+  final int skipPrice;
 
   Task({
     required this.id,
@@ -77,6 +80,9 @@ class Task {
     this.weekDays,
     this.monthDay,
     this.repeatInterval,
+    this.completionPoints = 10,
+    this.volunteerPoints = 20,
+    this.skipPrice = 100,
   });
 
   factory Task.fromFirestore(DocumentSnapshot doc) {
@@ -115,6 +121,9 @@ class Task {
           : null,
       monthDay: data['monthDay'],
       repeatInterval: data['repeatInterval'],
+      completionPoints: data['completionPoints'] ?? 10,
+      volunteerPoints: data['volunteerPoints'] ?? 20,
+      skipPrice: data['skipPrice'] ?? 100,
     );
   }
 
@@ -136,6 +145,9 @@ class Task {
       'weekDays': weekDays,
       'monthDay': monthDay,
       'repeatInterval': repeatInterval,
+      'completionPoints': completionPoints,
+      'volunteerPoints': volunteerPoints,
+      'skipPrice': skipPrice,
     };
   }
 
@@ -152,6 +164,9 @@ class Task {
     List<int>? weekDays,
     int? monthDay,
     int? repeatInterval,
+    int? completionPoints,
+    int? volunteerPoints,
+    int? skipPrice,
   }) {
     return Task(
       id: id,
@@ -170,6 +185,9 @@ class Task {
       weekDays: weekDays ?? this.weekDays,
       monthDay: monthDay ?? this.monthDay,
       repeatInterval: repeatInterval ?? this.repeatInterval,
+      completionPoints: completionPoints ?? this.completionPoints,
+      volunteerPoints: volunteerPoints ?? this.volunteerPoints,
+      skipPrice: skipPrice ?? this.skipPrice,
     );
   }
 }

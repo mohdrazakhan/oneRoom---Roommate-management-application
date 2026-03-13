@@ -558,7 +558,7 @@ class _AboutScreenState extends State<AboutScreen> {
               child: _buildSocialButton(
                 icon: Icons.language_rounded,
                 label: 'Website',
-                onTap: () => _launchURL('https://www.mohdrazakhan.me'),
+                onTap: () => _launchURL('https://www.oneroom.living/'),
               ),
             ),
             const SizedBox(width: 12),

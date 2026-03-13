@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // kIsWeb
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+import 'dart:io' show File; // for non-web usage
 
 import '../../providers/auth_provider.dart';
 import '../../widgets/safe_web_image.dart';
@@ -20,7 +21,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   bool _saving = false;
-  File? _pickedImage;
+  XFile? _pickedImage;
 
   @override
   void initState() {
@@ -44,7 +45,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       imageQuality: 70,
     );
     if (picked != null) {
-      setState(() => _pickedImage = File(picked.path));
+      setState(() => _pickedImage = picked);
       // For now we only preview. Upload to Firebase Storage if needed.
     }
   }
@@ -101,11 +102,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: CircleAvatar(
                         radius: 48,
                         backgroundColor: Colors.grey[200],
-                        foregroundImage: _pickedImage != null
-                            ? FileImage(_pickedImage!)
-                            : null,
-                        child: _pickedImage == null
-                            ? (profile.photoUrl != null &&
+                        child: _pickedImage != null
+                            ? ClipOval(
+                                child: kIsWeb
+                                    ? Image.network(
+                                        _pickedImage!.path,
+                                        width: 96,
+                                        height: 96,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : Image.file(
+                                        File(_pickedImage!.path),
+                                        width: 96,
+                                        height: 96,
+                                        fit: BoxFit.cover,
+                                      ),
+                              )
+                            : (profile.photoUrl != null &&
                                       profile.photoUrl!.isNotEmpty
                                   ? ClipOval(
                                       child: SafeWebImage(
@@ -127,8 +140,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       Icons.person,
                                       size: 48,
                                       color: Colors.white,
-                                    ))
-                            : null,
+                                    )),
                       ),
                     ),
                     const SizedBox(height: AppSpacing.lg),

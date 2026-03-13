@@ -1,4 +1,4 @@
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
 import 'package:flutter/material.dart';
 
 class SafeWebImage extends StatefulWidget {
@@ -30,7 +30,9 @@ class _SafeWebImageState extends State<SafeWebImage> {
   @override
   void initState() {
     super.initState();
-    _checkUrl();
+    // On web, checking URL existence via HEAD request is tricky due to CORS.
+    // We will rely on Image.network's built-in error handling.
+    _checked = true;
   }
 
   @override
@@ -39,40 +41,12 @@ class _SafeWebImageState extends State<SafeWebImage> {
     if (oldWidget.url != widget.url) {
       setState(() {
         _hasError = false;
-        _checked = false;
+        // _checked = false;
       });
-      _checkUrl();
     }
   }
 
-  Future<void> _checkUrl() async {
-    if (widget.url.isEmpty) {
-      if (mounted) setState(() => _hasError = true);
-      return;
-    }
-
-    try {
-      // Use HttpClient to check if the resource exists without downloading body
-      // This prevents NetworkImage from throwing 404 exception which pauses debugger
-      final client = HttpClient();
-      final request = await client.headUrl(Uri.parse(widget.url));
-      final response = await request.close();
-
-      if (mounted) {
-        setState(() {
-          _hasError = response.statusCode != HttpStatus.ok;
-          _checked = true;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _checked = true;
-        });
-      }
-    }
-  }
+  // Removed _checkUrl that used dart:io HttpClient
 
   @override
   Widget build(BuildContext context) {

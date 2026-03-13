@@ -7,6 +7,7 @@ import 'create_category_sheet.dart';
 import 'category_tasks_screen.dart';
 import '../../services/subscription_service.dart';
 import 'tasks_calendar_screen.dart';
+import '../../widgets/ad_banner_widget.dart';
 
 class TasksHomeScreen extends StatelessWidget {
   final String roomId;
@@ -20,83 +21,97 @@ class TasksHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Task Manager',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 20),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.grey[50],
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Task Manager',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 20),
+                ),
+                Text(
+                  roomName,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.normal,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
             ),
-            Text(
-              roomName,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.normal,
-                color: Colors.grey[600],
+            actions: [
+              IconButton(
+                icon: const Icon(
+                  Icons.calendar_month_rounded,
+                  color: Colors.black87,
+                ),
+                tooltip: 'Calendar View',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TasksCalendarScreen(roomId: roomId),
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(
-              Icons.calendar_month_rounded,
-              color: Colors.black87,
-            ),
-            tooltip: 'Calendar View',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => TasksCalendarScreen(roomId: roomId),
-              ),
+            ],
+            elevation: 0,
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black87,
+          ),
+          body: StreamBuilder<List<TaskCategory>>(
+            stream: context.read<TasksProvider>().getCategoriesStream(roomId),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text(
+                    'Error: ${snapshot.error}',
+                    style: TextStyle(color: Colors.red[700]),
+                  ),
+                );
+              }
+
+              final categories = snapshot.data ?? [];
+
+              if (categories.isEmpty) {
+                return _buildEmptyState(context);
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 72),
+                itemCount: categories.length,
+                itemBuilder: (context, index) {
+                  return _buildCategoryCard(context, categories[index]);
+                },
+              );
+            },
+          ),
+          floatingActionButton: Padding(
+            padding: const EdgeInsets.only(bottom: 56),
+            child: FloatingActionButton.extended(
+              onPressed: () => _showCreateCategory(context),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New Category'),
+              elevation: 4,
+              backgroundColor: Theme.of(context).colorScheme.primary,
             ),
           ),
-        ],
-        elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
-      ),
-      body: StreamBuilder<List<TaskCategory>>(
-        stream: context.read<TasksProvider>().getCategoriesStream(roomId),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Text(
-                'Error: ${snapshot.error}',
-                style: TextStyle(color: Colors.red[700]),
-              ),
-            );
-          }
-
-          final categories = snapshot.data ?? [];
-
-          if (categories.isEmpty) {
-            return _buildEmptyState(context);
-          }
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: categories.length,
-            itemBuilder: (context, index) {
-              return _buildCategoryCard(context, categories[index]);
-            },
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCreateCategory(context),
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('New Category'),
-        elevation: 4,
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
+        ),
+        // Bottom Ad Banner
+        const Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: AdBannerWidget(),
+        ),
+      ],
     );
   }
 

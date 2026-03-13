@@ -8,7 +8,9 @@ import '../../providers/auth_provider.dart';
 import '../../services/firestore_service.dart';
 
 class JoinRoomScreen extends StatefulWidget {
-  const JoinRoomScreen({super.key});
+  final String? roomId; // Optional room ID from deep link
+
+  const JoinRoomScreen({super.key, this.roomId});
 
   @override
   State<JoinRoomScreen> createState() => _JoinRoomScreenState();
@@ -22,6 +24,19 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
   bool _isLoading = false;
   String? _errorMessage;
   Map<String, dynamic>? _roomPreview;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-fill and lookup if room ID provided via deep link
+    if (widget.roomId != null && widget.roomId!.isNotEmpty) {
+      _roomCodeController.text = widget.roomId!;
+      // Auto-lookup the room after a short delay
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _lookupRoom();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -84,7 +99,19 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
     );
 
     if (result != null && mounted) {
-      _roomCodeController.text = result;
+      String roomId = result;
+      // Handle full URL from deep links
+      final uri = Uri.tryParse(result);
+      if (uri != null && uri.pathSegments.isNotEmpty) {
+        if (uri.host == 'oneroom.living' || uri.scheme == 'oneroom') {
+          if (uri.pathSegments.contains('join') &&
+              uri.pathSegments.last != 'join') {
+            roomId = uri.pathSegments.last;
+          }
+        }
+      }
+
+      _roomCodeController.text = roomId;
       _lookupRoom();
     }
   }

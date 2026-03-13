@@ -1,10 +1,15 @@
 // lib/screens/expenses/add_expense_sheet.dart
+import 'package:flutter/foundation.dart'; // kIsWeb
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
+import 'dart:io'
+    show
+        File; // Optional if needed for non-web specific logic, otherwise handled by XFile/CrossPlatform wrappers. keeping for now if used elsewhere but we aim to remove.
+
 import '../../Models/expense.dart';
 import '../../services/firestore_service.dart';
 
@@ -28,11 +33,10 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
 
   // State
   bool _isLoading = false;
-  File? _receiptImage;
+  XFile? _receiptImage;
 
-  List<String> _allParticipantUids = []; // Members + Guests
+  List<String> _allParticipantUids = []; // Room participants
   Map<String, String> _memberNames = {}; // uid -> name
-  final Map<String, String> _hiddenGuestNames = {}; // Name -> ID (for reuse)
   bool _membersLoaded = false;
 
   // Selections
@@ -79,9 +83,11 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
 
       final listA = room['memberUids'];
       final listB = room['members'];
-      final uids = listA is List
-          ? List<String>.from(listA)
-          : (listB is List ? List<String>.from(listB) : <String>[]);
+      final legacyMemberUids = listA is List ? [...listA.cast<String>()] : [];
+      final currentMembers = listB is List ? [...listB.cast<String>()] : [];
+
+      // Prefer current room membership, then include any legacy entries for backward compatibility.
+      final uids = <String>{...currentMembers, ...legacyMemberUids}.toList();
 
       // Fetch profiles to get names for dropdowns
       final profiles = await firestore.getUsersProfiles(uids);
@@ -102,7 +108,9 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
       // Load Guests
       final guestsMap = room['guests'] as Map<String, dynamic>?;
       final guestUids = <String>[];
-      _hiddenGuestNames.clear();
+      final settings = room['settings'] as Map<String, dynamic>?;
+      final isTripRoom =
+          (settings?['isTrip'] == true) || (room['isTrip'] == true);
 
       if (guestsMap != null) {
         guestsMap.forEach((guestId, data) {
@@ -112,7 +120,7 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
             // Check if guest should be shown:
             // 1. Only include if editing an expense where guest is already involved
             // 2. Otherwise don't show by default (user must add them manually)
-            bool keep = false;
+            bool keep = isTripRoom;
 
             if (widget.expense != null) {
               final e = widget.expense!;
@@ -123,11 +131,6 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
 
             if (keep) {
               guestUids.add(guestId);
-              names[guestId] = name;
-            } else {
-              // Store for potential reuse if user adds them again
-              _hiddenGuestNames[name.toLowerCase()] = guestId;
-              // We also populate names so if we revive them, we have the name
               names[guestId] = name;
             }
           }
@@ -188,14 +191,28 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
         _exactSplits = Map.from(e.splits);
         _selectedSplitMembers = Set.from(e.splitAmong); // Keep for consistency
       }
+
+      // If membership changed, sanitize stale payer/split selections.
+      if (_selectedPayer != null &&
+          !_allParticipantUids.contains(_selectedPayer)) {
+        _selectedPayer = _allParticipantUids.isNotEmpty
+            ? _allParticipantUids.first
+            : null;
+      }
+      _selectedSplitMembers = _selectedSplitMembers
+          .where(_allParticipantUids.contains)
+          .toSet();
     } else {
       // New Expense Defaults
-      _selectedPayer = currentUser;
+      if (currentUser != null && _allParticipantUids.contains(currentUser)) {
+        _selectedPayer = currentUser;
+      } else {
+        _selectedPayer = _allParticipantUids.isNotEmpty
+            ? _allParticipantUids.first
+            : null;
+      }
       if (_allParticipantUids.isNotEmpty) {
         _selectedSplitMembers = Set.from(_allParticipantUids);
-      }
-      if (_selectedPayer == null && _allParticipantUids.isNotEmpty) {
-        _selectedPayer = _allParticipantUids.first;
       }
     }
   }
@@ -244,247 +261,258 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
       );
     }
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
-        expand: false,
-        builder: (context, scrollController) {
-          return Column(
-            children: [
-              // Handle
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: DraggableScrollableSheet(
+          initialChildSize: 0.9,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (context, scrollController) {
+            return Column(
+              children: [
+                // Handle
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
 
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 8,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      widget.expense == null ? 'Add Expense' : 'Edit Expense',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-
-              // Scrollable Content
-              Expanded(
-                child: Form(
-                  key: _formKey,
-                  child: ListView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.all(20),
+                // Header
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Row 1: Description (Full Width)
-                      TextFormField(
-                        controller: _descriptionController,
-                        decoration: InputDecoration(
-                          labelText: 'Description',
-                          prefixIcon: const Icon(
-                            Icons.description_outlined,
-                            size: 20,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 16,
-                          ),
+                      Text(
+                        widget.expense == null ? 'Add Expense' : 'Edit Expense',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
                         ),
-                        validator: (val) =>
-                            (val == null || val.isEmpty) ? 'Required' : null,
                       ),
-                      const SizedBox(height: 16),
-
-                      // Row 2: Amount + Category
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Amount
-                          Expanded(
-                            flex: 1,
-                            child: TextFormField(
-                              controller: _amountController,
-                              decoration: InputDecoration(
-                                labelText: 'Amount',
-                                prefixIcon: const Icon(
-                                  Icons.currency_rupee,
-                                  size: 20,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 16,
-                                ),
-                              ),
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                  RegExp(r'^\d+\.?\d{0,2}'),
-                                ),
-                              ],
-                              validator: (val) => (val == null || val.isEmpty)
-                                  ? 'Required'
-                                  : null,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Category (Half)
-                          Expanded(child: _buildCategoryDropdown()),
-                        ],
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
                       ),
-                      const SizedBox(height: 16),
-
-                      // Row 3: Who Paid (Full Width)
-                      _buildPayerDropdown(),
-                      const SizedBox(height: 16),
-
-                      // Second Row of Options: Split Method
-                      _buildSplitMethodSelector(),
-                      const SizedBox(height: 16),
-
-                      // Dynamic Split Section
-                      _buildSplitSection(),
-                      const SizedBox(height: 16),
-
-                      // Notes & Receipt
-                      ExpansionTile(
-                        title: const Text(
-                          'Add Notes & Receipt',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        tilePadding: EdgeInsets.zero,
-                        children: [
-                          TextFormField(
-                            controller: _notesController,
-                            decoration: InputDecoration(
-                              labelText: 'Notes',
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            maxLines: 2,
-                          ),
-                          const SizedBox(height: 12),
-                          if (_receiptImage != null)
-                            Stack(
-                              children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(
-                                    _receiptImage!,
-                                    height: 100,
-                                    width: double.infinity,
-                                    fit: BoxFit.cover,
-                                    // Optimization to prevent buffer warnings
-                                    cacheWidth: 1024,
-                                    gaplessPlayback: true,
-                                  ),
-                                ),
-                                Positioned(
-                                  right: 4,
-                                  top: 4,
-                                  child: GestureDetector(
-                                    onTap: () =>
-                                        setState(() => _receiptImage = null),
-                                    child: const CircleAvatar(
-                                      radius: 12,
-                                      backgroundColor: Colors.black54,
-                                      child: Icon(
-                                        Icons.close,
-                                        size: 16,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                          else
-                            OutlinedButton.icon(
-                              onPressed: _pickReceipt,
-                              icon: const Icon(Icons.camera_alt),
-                              label: const Text('Attach Receipt'),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(double.infinity, 44),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Save Button
-                      FilledButton(
-                        onPressed: _isLoading ? null : _saveExpense,
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 50),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Text(
-                                widget.expense == null
-                                    ? 'Add Expense'
-                                    : 'Save Changes',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ),
-                      const SizedBox(height: 20), // Bottom padding
                     ],
                   ),
                 ),
-              ),
-            ],
-          );
-        },
+                const Divider(height: 1),
+
+                // Scrollable Content
+                Expanded(
+                  child: Form(
+                    key: _formKey,
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(20),
+                      children: [
+                        // Row 1: Description (Full Width)
+                        TextFormField(
+                          controller: _descriptionController,
+                          decoration: InputDecoration(
+                            labelText: 'Description',
+                            prefixIcon: const Icon(
+                              Icons.description_outlined,
+                              size: 20,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 16,
+                            ),
+                          ),
+                          validator: (val) =>
+                              (val == null || val.isEmpty) ? 'Required' : null,
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Row 2: Amount + Category
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Amount
+                            Expanded(
+                              flex: 1,
+                              child: TextFormField(
+                                controller: _amountController,
+                                decoration: InputDecoration(
+                                  labelText: 'Amount',
+                                  prefixIcon: const Icon(
+                                    Icons.currency_rupee,
+                                    size: 20,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 16,
+                                  ),
+                                ),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                    RegExp(r'^\d+\.?\d{0,2}'),
+                                  ),
+                                ],
+                                validator: (val) => (val == null || val.isEmpty)
+                                    ? 'Required'
+                                    : null,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            // Category (Half)
+                            Expanded(child: _buildCategoryDropdown()),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Row 3: Who Paid (Full Width)
+                        _buildPayerDropdown(),
+                        const SizedBox(height: 16),
+
+                        // Second Row of Options: Split Method
+                        _buildSplitMethodSelector(),
+                        const SizedBox(height: 16),
+
+                        // Dynamic Split Section
+                        _buildSplitSection(),
+                        const SizedBox(height: 16),
+
+                        // Notes & Receipt
+                        ExpansionTile(
+                          title: const Text(
+                            'Add Notes & Receipt',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                          tilePadding: EdgeInsets.zero,
+                          children: [
+                            TextFormField(
+                              controller: _notesController,
+                              decoration: InputDecoration(
+                                labelText: 'Notes',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              maxLines: 2,
+                            ),
+                            const SizedBox(height: 12),
+                            if (_receiptImage != null)
+                              Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: kIsWeb
+                                        ? Image.network(
+                                            _receiptImage!.path,
+                                            height: 100,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Image.file(
+                                            File(_receiptImage!.path),
+                                            height: 100,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                            cacheWidth: 1024,
+                                            gaplessPlayback: true,
+                                          ),
+                                  ),
+                                  Positioned(
+                                    right: 4,
+                                    top: 4,
+                                    child: GestureDetector(
+                                      onTap: () =>
+                                          setState(() => _receiptImage = null),
+                                      child: const CircleAvatar(
+                                        radius: 12,
+                                        backgroundColor: Colors.black54,
+                                        child: Icon(
+                                          Icons.close,
+                                          size: 16,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            else
+                              OutlinedButton.icon(
+                                onPressed: _pickReceipt,
+                                icon: const Icon(Icons.camera_alt),
+                                label: const Text('Attach Receipt'),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 44),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 24),
+
+                        // Save Button
+                        FilledButton(
+                          onPressed: _isLoading ? null : _saveExpense,
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(double.infinity, 50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  widget.expense == null
+                                      ? 'Add Expense'
+                                      : 'Save Changes',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        ),
+                        const SizedBox(height: 20), // Bottom padding
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -719,22 +747,6 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
           );
         }),
         const DropdownMenuItem(
-          value: 'ADD_GUEST',
-          child: Row(
-            children: [
-              Icon(Icons.person_add_alt_1, size: 16, color: Colors.green),
-              SizedBox(width: 8),
-              Text(
-                'Add Guest...',
-                style: TextStyle(
-                  color: Colors.green,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const DropdownMenuItem(
           value: 'MULTIPLE',
           child: Row(
             children: [
@@ -757,79 +769,11 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
               _payersMap = {};
             }
           });
-        } else if (val == 'ADD_GUEST') {
-          _showAddGuestDialog();
         } else if (val != null) {
           setState(() => _selectedPayer = val);
         }
       },
       validator: (val) => (val == null && !_isMultiPayer) ? 'Required' : null,
-    );
-  }
-
-  Future<void> _showAddGuestDialog() async {
-    final nameController = TextEditingController();
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Guest'),
-        content: TextField(
-          controller: nameController,
-          decoration: const InputDecoration(
-            labelText: 'Guest Name',
-            hintText: 'e.g. John',
-          ),
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (nameController.text.trim().isNotEmpty) {
-                final name = nameController.text.trim();
-                String? guestId;
-
-                // Check if we can reuse a hidden (settled) guest
-                final lowerName = name.toLowerCase();
-                if (_hiddenGuestNames.containsKey(lowerName)) {
-                  guestId = _hiddenGuestNames[lowerName];
-                }
-
-                try {
-                  if (guestId == null) {
-                    final fs = context.read<FirestoreService>();
-                    guestId = await fs.addGuestToRoom(widget.roomId, name);
-                  }
-
-                  if (mounted) {
-                    final String finalGuestId = guestId;
-                    setState(() {
-                      if (!_allParticipantUids.contains(finalGuestId)) {
-                        _allParticipantUids.add(finalGuestId);
-                      }
-                      _memberNames[finalGuestId] = name;
-                      _selectedPayer = finalGuestId; // Select the new guest
-                    });
-                    if (ctx.mounted) Navigator.pop(ctx);
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text('Failed: $e')));
-                  }
-                }
-              }
-            },
-            child: const Text('Add'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1341,7 +1285,7 @@ class _AddExpenseSheetState extends State<AddExpenseSheet> {
       imageQuality: 85,
     );
     if (image != null) {
-      setState(() => _receiptImage = File(image.path));
+      setState(() => _receiptImage = image);
     }
   }
 

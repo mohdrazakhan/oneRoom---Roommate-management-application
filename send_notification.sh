@@ -6,7 +6,7 @@
 TITLE="${1:-Test Notification}"
 BODY="${2:-This is a test message}"
 SECRET="oneroom-broadcast-2024"
-URL="https://us-central1-one-room-2c1a6.cloudfunctions.net/sendBroadcastHttp"
+URL="https://us-central1-one-room-56ea2.cloudfunctions.net/sendBroadcastHttp"
 
 echo "📤 Sending notification..."
 echo "   Title: $TITLE"

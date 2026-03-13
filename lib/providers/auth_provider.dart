@@ -1,7 +1,7 @@
-// lib/providers/auth_provider.dart
 import 'dart:async';
-import 'dart:io';
+import 'package:flutter/foundation.dart'; // for kIsWeb if needed, generally useful
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -9,12 +9,19 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
+import 'package:image_picker/image_picker.dart'; // Provides XFile
 import '../Models/user_profile.dart';
 
 class AuthProvider extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: ['email', 'profile'],
+    forceCodeForRefreshToken: true,
+    serverClientId:
+        '30053537626-7lkjrf210smdeuivrr0ecnrir3hr4mrr.apps.googleusercontent.com',
+  );
 
   User? firebaseUser;
   UserProfile? profile;
@@ -338,7 +345,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// Upload profile photo to Firebase Storage
-  Future<void> uploadProfilePhoto(File imageFile) async {
+  Future<void> uploadProfilePhoto(XFile imageFile) async {
     if (firebaseUser == null) return;
     isLoading = true;
     notifyListeners();
@@ -348,7 +355,12 @@ class AuthProvider extends ChangeNotifier {
       final storageRef = _storage.ref().child('users/$uid/profile.jpg');
 
       // Upload file
-      await storageRef.putFile(imageFile);
+      // Use putData for cross-platform support (works on web & mobile)
+      final bytes = await imageFile.readAsBytes();
+      await storageRef.putData(
+        bytes,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
 
       // Get download URL
       final photoUrl = await storageRef.getDownloadURL();
@@ -515,22 +527,33 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> signInWithGoogle() async {
     try {
+      debugPrint('🔵 AuthProvider: Starting Google Sign-In...');
       isLoading = true;
+      error = null;
       notifyListeners();
 
       // Trigger the authentication flow
-      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
 
       if (googleUser == null) {
+        debugPrint(
+          '⚠️ AuthProvider: Google Sign-In canceled by user (googleUser is null)',
+        );
         // The user canceled the sign-in
         isLoading = false;
         notifyListeners();
         return;
       }
 
+      debugPrint('✅ AuthProvider: Google User signed in: ${googleUser.email}');
+
       // Obtain the auth details from the request
       final GoogleSignInAuthentication googleAuth =
           await googleUser.authentication;
+
+      debugPrint(
+        '✅ AuthProvider: Got Google Auth tokens. ID Token present: ${googleAuth.idToken != null}',
+      );
 
       // Create a new credential
       final OAuthCredential credential = GoogleAuthProvider.credential(
@@ -538,17 +561,42 @@ class AuthProvider extends ChangeNotifier {
         idToken: googleAuth.idToken,
       );
 
+      debugPrint('🔵 AuthProvider: Signing in to Firebase with credential...');
+
       // Sign in to Firebase with the Google [UserCredential]
       final userCredential = await _auth.signInWithCredential(credential);
       firebaseUser = userCredential.user;
 
+      debugPrint(
+        '✅ AuthProvider: Firebase Sign-In Successful: ${firebaseUser?.uid}',
+      );
+
       if (firebaseUser != null) {
         await _loadOrCreateUserProfile(firebaseUser!);
       }
+    } on PlatformException catch (e) {
+      final code = e.code.toLowerCase();
+      final details = '${e.message ?? ''} ${e.details ?? ''}'.toLowerCase();
+
+      // Treat user-driven cancellation/back-dismissal as non-error.
+      if (code.contains('cancel') || details.contains('cancel')) {
+        debugPrint('⚠️ AuthProvider: Google Sign-In cancelled: ${e.code}');
+        error = null;
+        return;
+      }
+
+      debugPrint('❌ AuthProvider: PlatformException: ${e.code} - ${e.message}');
+      error = e.message ?? 'Google sign-in failed';
+      rethrow;
     } on FirebaseAuthException catch (e) {
+      debugPrint(
+        '❌ AuthProvider: FirebaseAuthException: ${e.code} - ${e.message}',
+      );
       error = e.message;
       rethrow;
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('❌ AuthProvider: Unexpected Error: $e');
+      debugPrintStack(stackTrace: stack);
       error = e.toString();
       rethrow;
     } finally {

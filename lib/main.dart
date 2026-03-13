@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_in_app_messaging/firebase_in_app_messaging.dart';
 import 'package:provider/provider.dart';
 
 import 'firebase_options.dart';
@@ -12,6 +14,7 @@ import 'providers/tasks_provider.dart';
 import 'services/firestore_service.dart';
 import 'services/notification_service.dart';
 import 'services/subscription_service.dart';
+import 'services/app_icon_service.dart';
 import 'app.dart'; // contains MyApp + AuthWrapper + routes
 
 Future<void> main() async {
@@ -90,9 +93,25 @@ void _initializeBackgroundServices() {
         debugPrint('⚠️ Google Mobile Ads initialization failed: $e');
       });
 
+  // Enable Firebase Analytics and In-App Messaging collection.
+  FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true).catchError((
+    e,
+  ) {
+    debugPrint('⚠️ Firebase Analytics initialization failed: $e');
+  });
+  FirebaseInAppMessaging.instance
+      .setAutomaticDataCollectionEnabled(true)
+      .catchError((e) {
+        debugPrint('⚠️ Firebase In-App Messaging init failed: $e');
+      });
+  FirebaseInAppMessaging.instance.setMessagesSuppressed(false).catchError((e) {
+    debugPrint('⚠️ Firebase In-App Messaging suppress flag failed: $e');
+  });
+
   // Initialize notifications after a small delay
   Future.delayed(const Duration(milliseconds: 500), () {
     NotificationService().initialize();
+    AppIconService().initializeAndCheck();
   });
 }
 

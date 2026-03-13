@@ -44,7 +44,7 @@ echo ""
 
 # Set the project
 echo "Setting Firebase project..."
-firebase use one-room-b42b0
+firebase use one-room-2c1a6
 
 echo ""
 echo "📤 Deploying Firestore rules..."

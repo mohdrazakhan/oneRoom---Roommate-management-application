@@ -19,6 +19,12 @@ class RoomCard extends StatelessWidget {
   final VoidCallback? onTasksTap;
   final VoidCallback? onChatTap;
   final VoidCallback? onMorePressed;
+  final VoidCallback? onFolderTap;
+  final bool showTasksAction;
+  final bool showSettingsAction;
+  final bool showFolderAction;
+  final bool showBalanceChip;
+  final int? memberCountOverride;
 
   const RoomCard({
     super.key,
@@ -27,17 +33,28 @@ class RoomCard extends StatelessWidget {
     this.onTasksTap,
     this.onChatTap,
     this.onMorePressed,
+    this.onFolderTap,
+    this.showTasksAction = true,
+    this.showSettingsAction = true,
+    this.showFolderAction = false,
+    this.showBalanceChip = true,
+    this.memberCountOverride,
   });
 
   @override
   Widget build(BuildContext context) {
-    final membersCount = room.members.length;
+    final activeGuestCount = room.guests.values.where((g) {
+      if (g is! Map<String, dynamic>) return false;
+      return g['isActive'] != false;
+    }).length;
+    final membersCount =
+        memberCountOverride ?? (room.members.length + activeGuestCount);
     final dateText = Formatters.formatDateTime(room.createdAt);
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Responsive padding and margins
-        final horizontalMargin = constraints.maxWidth < 360 ? 12.0 : 16.0;
+        // Responsive padding and margins - smaller horizontal margins
+        final horizontalMargin = constraints.maxWidth < 360 ? 8.0 : 8.0;
         final cardPadding = constraints.maxWidth < 360 ? 12.0 : 16.0;
 
         return Container(
@@ -193,7 +210,7 @@ class RoomCard extends StatelessWidget {
                           },
                         ),
                         // My balance chip (you owe / you get) for this room
-                        _MyBalanceChip(roomId: room.id),
+                        if (showBalanceChip) _MyBalanceChip(roomId: room.id),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -217,17 +234,19 @@ class RoomCard extends StatelessWidget {
                               ),
                             ),
                             SizedBox(width: spacing),
-                            Expanded(
-                              child: _buildActionButton(
-                                context,
-                                icon: Icons.task_alt_rounded,
-                                label: 'Tasks',
-                                onPressed: onTasksTap,
-                                isPrimary: false,
-                                compact: isSmallScreen,
+                            if (showTasksAction) ...[
+                              Expanded(
+                                child: _buildActionButton(
+                                  context,
+                                  icon: Icons.task_alt_rounded,
+                                  label: 'Tasks',
+                                  onPressed: onTasksTap,
+                                  isPrimary: false,
+                                  compact: isSmallScreen,
+                                ),
                               ),
-                            ),
-                            SizedBox(width: spacing),
+                              SizedBox(width: spacing),
+                            ],
                             Expanded(
                               child: _buildActionButton(
                                 context,
@@ -238,7 +257,16 @@ class RoomCard extends StatelessWidget {
                                 compact: isSmallScreen,
                               ),
                             ),
-                            if (onMorePressed != null) ...[
+                            if (showFolderAction && onFolderTap != null) ...[
+                              SizedBox(width: spacing),
+                              _buildIconOnlyButton(
+                                context,
+                                icon: Icons.folder_rounded,
+                                onPressed: onFolderTap,
+                              ),
+                            ],
+                            if (showSettingsAction &&
+                                onMorePressed != null) ...[
                               SizedBox(width: spacing),
                               _buildIconOnlyButton(
                                 context,

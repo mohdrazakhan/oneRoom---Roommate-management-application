@@ -1,9 +1,10 @@
 // ignore_for_file: avoid_print
 // lib/services/chat_service.dart
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart'; // For XFile
 import '../Models/chat_message.dart';
 import '../Models/room_notification.dart';
 import 'notification_helper.dart';
@@ -103,14 +104,16 @@ class ChatService {
 
   Future<String> _uploadFile(
     String roomId,
-    File file,
+    XFile file,
     String ext,
     String contentType,
   ) async {
     final id = _db.collection('_ids').doc().id;
     final ref = _storage.ref().child('rooms/$roomId/chat/$id.$ext');
-    final task = await ref.putFile(
-      file,
+
+    final bytes = await file.readAsBytes();
+    final task = await ref.putData(
+      bytes,
       SettableMetadata(contentType: contentType),
     );
     return await task.ref.getDownloadURL();
@@ -118,7 +121,7 @@ class ChatService {
 
   Future<void> sendMedia({
     required String roomId,
-    required File file,
+    required XFile file,
     required String ext,
     required String contentType,
     required String kind, // 'image' | 'video' | 'audio'

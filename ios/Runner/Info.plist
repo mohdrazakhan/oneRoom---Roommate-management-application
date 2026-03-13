@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>one_room</string>
+	<string>One Room</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -45,6 +45,37 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>premium_icon</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>premium_icon</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>new_year_icon</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>new_year_icon</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+		</dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon</string>
+			</array>
+		</dict>
+	</dict>
 	<!-- Google Sign-In Configuration -->
 	<key>CFBundleURLTypes</key>
 	<array>
@@ -64,7 +95,9 @@
 	<string>This app needs access to your camera to scan QR codes and take photos for the app.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app may need access to your microphone for future video chat features.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>This app needs access to your contacts so you can quickly select a person for udhar records.</string>
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<string>ca-app-pub-1174538697381859~7010297299</string>
 </dict>
 </plist>

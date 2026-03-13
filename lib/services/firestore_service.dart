@@ -2,18 +2,23 @@
 // lib/services/firestore_service.dart
 // Firestore helper: rooms, expenses, users
 import 'dart:async';
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart' hide Task;
 import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart'; // For XFile
 import '../Models/expense.dart';
+import '../Models/personal_expense.dart';
 import '../Models/room_notification.dart';
 import '../Models/task.dart';
+import '../Models/udhar_transaction.dart';
+import '../Models/fixed_bill.dart';
 import '../Models/task_category.dart';
+import '../Models/trip.dart';
+import '../Models/trip_expense.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -21,9 +26,372 @@ class FirestoreService {
   // Simple in-memory cache for user profiles to speed up repeated lookups
   final Map<String, Map<String, dynamic>> _profileCache = {};
 
+  bool _isSyncingInProgress = false;
+
+  static const String _alphaNumericChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+  String _generateAlphaNumericCode({int length = 6}) {
+    final rand = Random();
+    return List.generate(
+      length,
+      (_) => _alphaNumericChars[rand.nextInt(_alphaNumericChars.length)],
+    ).join();
+  }
+
+  Future<String> _generateUniqueTripJoinCode() async {
+    for (var i = 0; i < 10; i++) {
+      final code = _generateAlphaNumericCode(length: 6);
+      final exists = await _rooms
+          .where('joinCode', isEqualTo: code)
+          .limit(1)
+          .get();
+      if (exists.docs.isEmpty) return code;
+    }
+    return _generateAlphaNumericCode(length: 6);
+  }
+
   /// Top-level collection references
   CollectionReference get _rooms => _db.collection('rooms');
   CollectionReference get _users => _db.collection('users');
+
+  /// ---------------------------
+  ///     PERSONAL EXPENSES
+  /// ---------------------------
+
+  CollectionReference personalExpensesRef(String uid) =>
+      _users.doc(uid).collection('personal_expenses');
+
+  Stream<List<PersonalExpense>> streamPersonalExpenses(String uid) {
+    return personalExpensesRef(uid)
+        .orderBy('date', descending: true)
+        .snapshots()
+        .map(
+          (snap) =>
+              snap.docs.map((doc) => PersonalExpense.fromDoc(doc)).toList(),
+        );
+  }
+
+  Future<void> addPersonalExpense(String uid, PersonalExpense expense) async {
+    await personalExpensesRef(uid).add({
+      ...expense.toMap(),
+      'date':
+          FieldValue.serverTimestamp(), // Ensure server timestamp on creation
+    });
+  }
+
+  Future<void> updatePersonalExpense(
+    String uid,
+    PersonalExpense expense,
+  ) async {
+    await personalExpensesRef(uid).doc(expense.id).update(expense.toMap());
+  }
+
+  Future<void> deletePersonalExpense(String uid, String expenseId) async {
+    await personalExpensesRef(uid).doc(expenseId).delete();
+  }
+
+  /// ---------------------------
+  ///       TRIP PLANNER
+  /// ---------------------------
+
+  CollectionReference tripsRef(String uid) =>
+      _users.doc(uid).collection('trips');
+
+  CollectionReference tripExpensesRef(String uid, String tripId) =>
+      tripsRef(uid).doc(tripId).collection('expenses');
+
+  Stream<List<Trip>> streamTrips(String uid) {
+    return tripsRef(uid)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map((doc) => Trip.fromDoc(doc)).toList());
+  }
+
+  Future<String> createTrip(String uid, Trip trip) async {
+    final doc = tripsRef(uid).doc();
+    await doc.set({...trip.toMap(), 'createdAt': FieldValue.serverTimestamp()});
+    return doc.id;
+  }
+
+  Future<void> updateTrip(String uid, Trip trip) async {
+    await tripsRef(uid).doc(trip.id).update(trip.toMap());
+  }
+
+  Future<void> deleteTrip(String uid, String tripId) async {
+    final expenses = await tripExpensesRef(uid, tripId).get();
+    for (final doc in expenses.docs) {
+      await doc.reference.delete();
+    }
+    await tripsRef(uid).doc(tripId).delete();
+  }
+
+  Stream<List<TripExpense>> streamTripExpenses(String uid, String tripId) {
+    return tripExpensesRef(uid, tripId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map(
+          (snap) => snap.docs.map((doc) => TripExpense.fromDoc(doc)).toList(),
+        );
+  }
+
+  Future<String> addTripExpense(
+    String uid,
+    String tripId,
+    TripExpense expense,
+  ) async {
+    final doc = tripExpensesRef(uid, tripId).doc();
+    await doc.set({
+      ...expense.toMap(),
+      'tripId': tripId,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    return doc.id;
+  }
+
+  Future<void> deleteTripExpense(
+    String uid,
+    String tripId,
+    String expenseId,
+  ) async {
+    await tripExpensesRef(uid, tripId).doc(expenseId).delete();
+  }
+
+  /// -----------------------------------------------------------------------
+  ///  ROOM → PERSONAL EXPENSE SYNC
+  /// -----------------------------------------------------------------------
+
+  /// Save the user's sync preference to their profile.
+  Future<void> setRoomSyncEnabled(String uid, bool enabled) async {
+    await _users.doc(uid).set({
+      'roomSyncEnabled': enabled,
+    }, SetOptions(merge: true));
+  }
+
+  /// Batch-delete every personal expense that was auto-synced from a room.
+  Future<int> deleteRoomSyncedExpenses(String uid) async {
+    // Client-side filter — avoids needing a Firestore composite index
+    final snap = await personalExpensesRef(uid).get();
+    final toDelete = snap.docs.where((doc) {
+      final data = doc.data() as Map<String, dynamic>? ?? {};
+      return data['isRoomSync'] == true;
+    }).toList();
+
+    if (toDelete.isEmpty) return 0;
+
+    // Delete in chunks of 500 (Firestore batch limit)
+    for (var i = 0; i < toDelete.length; i += 500) {
+      final chunk = toDelete.sublist(i, (i + 500).clamp(0, toDelete.length));
+      final batch = _db.batch();
+      for (final doc in chunk) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    }
+    return toDelete.length;
+  }
+
+  /// Fetch every room the user belongs to, then sync their share (splits[uid])
+  /// of each expense into personal expenses.
+  ///
+  /// Returns the number of NEW entries added (already-synced ones are skipped).
+  Future<int> syncRoomExpensesToPersonal(String uid) async {
+    if (_isSyncingInProgress) return 0; // Prevent concurrent duplicate runs
+    _isSyncingInProgress = true;
+
+    try {
+      // 1. Fetch ALL personal expenses client-side to avoid Firestore index issues
+      final existingSnap = await personalExpensesRef(uid).get();
+      final existingSynced = <String, DocumentReference>{}; // srcId -> docRef
+      for (final doc in existingSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>? ?? {};
+        if (data['isRoomSync'] == true) {
+          final srcId = data['sourceRoomExpenseId'] as String?;
+          if (srcId != null && srcId.isNotEmpty) {
+            existingSynced[srcId] = doc.reference;
+          }
+        }
+      }
+
+      // 2. Fetch rooms this user belongs to (one-shot)
+      final roomsSnap = await _rooms.where('members', arrayContains: uid).get();
+      int added = 0;
+
+      for (final roomDoc in roomsSnap.docs) {
+        final roomData = roomDoc.data() as Map<String, dynamic>? ?? {};
+        final roomName = (roomData['name'] ?? 'Room') as String;
+        final roomId = roomDoc.id;
+
+        // 3. Fetch expenses for this room
+        final expSnap = await _rooms.doc(roomId).collection('expenses').get();
+
+        for (final expDoc in expSnap.docs) {
+          final expData = expDoc.data() as Map<String, dynamic>? ?? {};
+
+          // Build splits map
+          final rawSplits = expData['splits'] as Map<String, dynamic>?;
+          if (rawSplits == null) continue;
+
+          final userShare = rawSplits[uid] == null
+              ? null
+              : (rawSplits[uid] is int
+                    ? (rawSplits[uid] as int).toDouble()
+                    : rawSplits[uid] as double);
+
+          // Skip if user has no share in this expense
+          if (userShare == null || userShare <= 0) continue;
+
+          // Parse expense date
+          final dynamic ts = expData['createdAt'];
+          DateTime expDate;
+          if (ts is Timestamp) {
+            expDate = ts.toDate();
+          } else {
+            expDate = DateTime.now();
+          }
+
+          // ── Only sync current month's expenses ──────────────────────────
+          final now = DateTime.now();
+          if (expDate.year != now.year || expDate.month != now.month) continue;
+
+          // This expense is valid and current. Exclude it from deletion.
+          final existingRef = existingSynced.remove(expDoc.id);
+
+          // Skip adding if already synced
+          if (existingRef != null) continue;
+
+          final description =
+              '${expData['description'] ?? 'Expense'} ($roomName)';
+          final category = 'Room Spent';
+
+          // 4. Write the personal expense
+          await personalExpensesRef(uid).add({
+            'description': description,
+            'amount': userShare,
+            'date': Timestamp.fromDate(expDate),
+            'category': category,
+            'paymentMode': 'Room Sync',
+            'userId': uid,
+            'notes': 'Auto-synced from room: $roomName',
+            'isRoomSync': true,
+            'sourceRoomExpenseId': expDoc.id,
+          });
+
+          added++;
+        }
+      }
+
+      // 5. Delete any synced personal expenses that were removed from the room
+      //    (or belong to past months, or user no longer has a share).
+      if (existingSynced.isNotEmpty) {
+        final toDelete = existingSynced.values.toList();
+        for (var i = 0; i < toDelete.length; i += 500) {
+          final chunk = toDelete.sublist(
+            i,
+            (i + 500).clamp(0, toDelete.length),
+          );
+          final batch = _db.batch();
+          for (final ref in chunk) {
+            batch.delete(ref);
+          }
+          await batch.commit();
+        }
+      }
+
+      return added;
+    } finally {
+      // Always release the lock
+      _isSyncingInProgress = false;
+    }
+  }
+
+  /// ---------------------------
+  ///       UDHAR / DEBT
+  /// ---------------------------
+
+  CollectionReference udharRef(String uid) =>
+      _users.doc(uid).collection('udhar_transactions');
+
+  Stream<List<UdharTransaction>> streamUdharTransactions(String uid) {
+    return udharRef(uid)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map(
+          (snap) =>
+              snap.docs.map((doc) => UdharTransaction.fromDoc(doc)).toList(),
+        );
+  }
+
+  Future<void> addUdhar(String uid, UdharTransaction udhar) async {
+    await udharRef(
+      uid,
+    ).add({...udhar.toMap(), 'createdAt': FieldValue.serverTimestamp()});
+  }
+
+  Future<void> updateUdhar(String uid, UdharTransaction udhar) async {
+    await udharRef(uid).doc(udhar.id).update(udhar.toMap());
+  }
+
+  Future<void> deleteUdhar(String uid, String id) async {
+    await udharRef(uid).doc(id).delete();
+  }
+
+  Future<String> uploadUdharPersonImage(XFile imageFile, String uid) async {
+    try {
+      final String fileName =
+          'person_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final Reference ref = FirebaseStorage.instance.ref().child(
+        'udhar_images/$uid/$fileName',
+      );
+
+      final bytes = await imageFile.readAsBytes();
+      await ref.putData(bytes);
+      return await ref.getDownloadURL();
+    } catch (e) {
+      print('Error uploading udhar person image: $e');
+      rethrow;
+    }
+  }
+
+  Future<String> uploadUdharReceipt(XFile imageFile, String uid) async {
+    try {
+      final String fileName =
+          'receipt_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final Reference ref = FirebaseStorage.instance.ref().child(
+        'udhar_images/$uid/$fileName',
+      );
+
+      final bytes = await imageFile.readAsBytes();
+      await ref.putData(bytes);
+      return await ref.getDownloadURL();
+    } catch (e) {
+      print('Error uploading udhar receipt image: $e');
+      rethrow;
+    }
+  }
+
+  /// ---------------------------
+  ///       FIXED BILLS
+  /// ---------------------------
+
+  CollectionReference fixedBillsRef(String uid) =>
+      _users.doc(uid).collection('fixed_bills');
+
+  Stream<List<FixedBill>> streamFixedBills(String uid) {
+    return fixedBillsRef(uid)
+        .orderBy('dueDay', descending: false)
+        .snapshots()
+        .map((snap) => snap.docs.map((doc) => FixedBill.fromDoc(doc)).toList());
+  }
+
+  Future<void> addFixedBill(String uid, FixedBill bill) async {
+    await fixedBillsRef(
+      uid,
+    ).add({...bill.toMap(), 'createdAt': FieldValue.serverTimestamp()});
+  }
+
+  Future<void> deleteFixedBill(String uid, String id) async {
+    await fixedBillsRef(uid).doc(id).delete();
+  }
 
   /// ---------------------------
   ///            ROOMS
@@ -76,15 +444,142 @@ class FirestoreService {
       'name': name,
       'createdBy': createdBy,
       'members': [createdBy],
+      'memberUids': [createdBy],
       'createdAt': FieldValue.serverTimestamp(),
     });
     return doc.id;
+  }
+
+  Future<String?> uploadTripImage(XFile imageFile, String uid) async {
+    try {
+      final fileName = 'trip_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final ref = FirebaseStorage.instance.ref().child(
+        'trip_images/$uid/$fileName',
+      );
+      final bytes = await imageFile.readAsBytes();
+      await ref.putData(bytes);
+      return await ref.getDownloadURL();
+    } catch (e) {
+      debugPrint('Error uploading trip image: $e');
+      return null;
+    }
+  }
+
+  Future<String> createTripRoom({
+    required String uid,
+    required String name,
+    String? description,
+    XFile? imageFile,
+  }) async {
+    final doc = _rooms.doc();
+    final joinCode = await _generateUniqueTripJoinCode();
+    final photoUrl = imageFile != null
+        ? await uploadTripImage(imageFile, uid)
+        : null;
+
+    await doc.set({
+      'name': name,
+      'createdBy': uid,
+      'members': [uid],
+      'memberUids': [uid],
+      'createdAt': FieldValue.serverTimestamp(),
+      'joinCode': joinCode,
+      if (photoUrl != null) 'photoUrl': photoUrl,
+      'settings': {
+        'isTrip': true,
+        'tripJoinCode': joinCode,
+        if (description != null && description.trim().isNotEmpty)
+          'tripDescription': description.trim(),
+      },
+    });
+
+    await _rooms.doc(doc.id).collection('auditLog').add({
+      'action': 'trip_created',
+      'performedBy': uid,
+      'timestamp': FieldValue.serverTimestamp(),
+      'joinCode': joinCode,
+    });
+
+    return doc.id;
+  }
+
+  Future<String> getOrCreateTripJoinCode(String roomId) async {
+    final room = await getRoomById(roomId);
+    if (room == null) {
+      throw Exception('Trip not found');
+    }
+
+    final settings = room['settings'] as Map<String, dynamic>?;
+    final isTrip = (settings?['isTrip'] == true) || (room['isTrip'] == true);
+    if (!isTrip) {
+      throw Exception('This room is not a trip');
+    }
+
+    final existing =
+        ((room['joinCode'] ?? settings?['tripJoinCode']) as String?)
+            ?.trim()
+            .toUpperCase() ??
+        '';
+    final isValid = RegExp(r'^[A-Z0-9]{6}$').hasMatch(existing);
+    if (isValid) return existing;
+
+    final code = await _generateUniqueTripJoinCode();
+    await _rooms.doc(roomId).update({
+      'joinCode': code,
+      'settings.tripJoinCode': code,
+    });
+    return code;
+  }
+
+  Future<Map<String, dynamic>?> findTripByJoinCode(String joinCode) async {
+    final normalized = joinCode.trim().toUpperCase();
+    if (normalized.isEmpty) return null;
+
+    final snap = await _rooms
+        .where('joinCode', isEqualTo: normalized)
+        .limit(1)
+        .get();
+
+    if (snap.docs.isEmpty) return null;
+    final doc = snap.docs.first;
+    final data = doc.data() as Map<String, dynamic>;
+    return {...data, 'id': doc.id};
+  }
+
+  Future<void> joinTripByCode({
+    required String joinCode,
+    required String userId,
+  }) async {
+    final room = await findTripByJoinCode(joinCode);
+    if (room == null) {
+      throw Exception('Trip not found');
+    }
+
+    final roomId = room['id'] as String;
+    final settings = room['settings'] as Map<String, dynamic>?;
+    final isTrip = (settings?['isTrip'] == true) || (room['isTrip'] == true);
+    if (!isTrip) {
+      throw Exception('This code is not for a trip');
+    }
+
+    await _rooms.doc(roomId).update({
+      'members': FieldValue.arrayUnion([userId]),
+      'memberUids': FieldValue.arrayUnion([userId]),
+    });
+
+    await _rooms.doc(roomId).collection('auditLog').add({
+      'action': 'trip_joined',
+      'performedBy': userId,
+      'timestamp': FieldValue.serverTimestamp(),
+      'joinCode': joinCode.trim().toUpperCase(),
+    });
   }
 
   /// Add a member uid to a room.members array
   Future<void> addMember(String roomId, String uid) async {
     await _rooms.doc(roomId).update({
       'members': FieldValue.arrayUnion([uid]),
+      'memberUids': FieldValue.arrayUnion([uid]),
     });
   }
 
@@ -92,6 +587,7 @@ class FirestoreService {
   Future<void> removeMember(String roomId, String uid) async {
     await _rooms.doc(roomId).update({
       'members': FieldValue.arrayRemove([uid]),
+      'memberUids': FieldValue.arrayRemove([uid]),
     });
   }
 
@@ -125,6 +621,50 @@ class FirestoreService {
 
     // Delete the room itself
     await _rooms.doc(roomId).delete();
+  }
+
+  Future<void> _deleteSubcollection(
+    DocumentReference roomRef,
+    String subcollection,
+  ) async {
+    final snap = await roomRef.collection(subcollection).get();
+    for (final doc in snap.docs) {
+      await doc.reference.delete();
+    }
+  }
+
+  Future<void> _deleteRoomMediaFiles(String roomId) async {
+    final mediaSnap = await _rooms.doc(roomId).collection('media').get();
+    for (final doc in mediaSnap.docs) {
+      final data = doc.data();
+      final storagePath = (data['storagePath'] ?? '').toString();
+      final url = (data['url'] ?? '').toString();
+
+      try {
+        if (storagePath.isNotEmpty) {
+          await FirebaseStorage.instance.ref().child(storagePath).delete();
+        } else if (url.isNotEmpty) {
+          await FirebaseStorage.instance.refFromURL(url).delete();
+        }
+      } catch (_) {
+        // Ignore missing/deleted files and continue cleanup.
+      }
+    }
+  }
+
+  Future<void> deleteRoomCompletely(String roomId) async {
+    final roomRef = _rooms.doc(roomId);
+
+    await _deleteSubcollection(roomRef, 'expenses');
+    await _deleteSubcollection(roomRef, 'tasks');
+    await _deleteSubcollection(roomRef, 'task_categories');
+    await _deleteSubcollection(roomRef, 'payments');
+    await _deleteSubcollection(roomRef, 'notifications');
+    await _deleteSubcollection(roomRef, 'auditLog');
+    await _deleteRoomMediaFiles(roomId);
+    await _deleteSubcollection(roomRef, 'media');
+
+    await roomRef.delete();
   }
 
   /// Get a one-time snapshot of room as a Map (includes 'id') or null if missing.
@@ -167,7 +707,35 @@ class FirestoreService {
   }
 
   /// Add a guest to the room
-  Future<String> addGuestToRoom(String roomId, String guestName) async {
+  Future<String> addGuestToRoom(
+    String roomId,
+    String guestName, {
+    String? phoneNumber,
+    String? email,
+  }) async {
+    final normalizedName = guestName.trim().toLowerCase();
+    if (normalizedName.isEmpty) {
+      throw Exception('Member name is required');
+    }
+
+    final roomSnap = await _rooms.doc(roomId).get();
+    final roomData = roomSnap.data() as Map<String, dynamic>? ?? {};
+    final guestsMap = roomData['guests'] as Map<String, dynamic>?;
+
+    if (guestsMap != null) {
+      for (final data in guestsMap.values) {
+        if (data is! Map<String, dynamic>) continue;
+        if (data['isActive'] == false) continue;
+        final existingName = (data['name'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        if (existingName == normalizedName) {
+          throw Exception('Member name already exists. Use a different name.');
+        }
+      }
+    }
+
     // We store guests in a map: guests.guestId = {name: ..., ...}
     // Generate a simple guest ID
     final guestId =
@@ -175,13 +743,192 @@ class FirestoreService {
 
     final guestData = {
       'name': guestName.trim(),
+      if (phoneNumber != null && phoneNumber.trim().isNotEmpty)
+        'phoneNumber': phoneNumber.trim(),
+      if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
       'createdAt': Timestamp.now(),
       'isActive': true,
     };
 
     await _rooms.doc(roomId).update({'guests.$guestId': guestData});
 
+    await _rooms.doc(roomId).collection('auditLog').add({
+      'action': 'trip_member_added',
+      'timestamp': FieldValue.serverTimestamp(),
+      'memberId': guestId,
+      'memberName': guestName.trim(),
+      if (phoneNumber != null && phoneNumber.trim().isNotEmpty)
+        'phoneNumber': phoneNumber.trim(),
+      if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+    });
+
     return guestId;
+  }
+
+  Future<void> removeGuestFromRoom(String roomId, String guestId) async {
+    await _rooms.doc(roomId).update({'guests.$guestId': FieldValue.delete()});
+
+    await _rooms.doc(roomId).collection('auditLog').add({
+      'action': 'trip_member_removed',
+      'timestamp': FieldValue.serverTimestamp(),
+      'memberId': guestId,
+    });
+  }
+
+  Stream<List<Map<String, dynamic>>> roomMediaStream(String roomId) {
+    return _rooms
+        .doc(roomId)
+        .collection('media')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map(
+          (snap) => snap.docs.map((doc) {
+            final data = doc.data();
+            return {...data, 'id': doc.id};
+          }).toList(),
+        );
+  }
+
+  Future<void> uploadRoomMedia({
+    required String roomId,
+    required XFile file,
+    required String mediaType,
+    String? uploaderUid,
+  }) async {
+    final uid = uploaderUid ?? FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      throw Exception('Please login first');
+    }
+
+    final ext = file.path.contains('.') ? file.path.split('.').last : '';
+    final normalizedExt = ext.toLowerCase();
+    final defaultExt = mediaType == 'video' ? 'mp4' : 'jpg';
+    final fileName =
+        '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(100000)}.${normalizedExt.isEmpty ? defaultExt : normalizedExt}';
+    final storagePath = 'room_media/$roomId/$fileName';
+
+    final ref = FirebaseStorage.instance.ref().child(storagePath);
+    final bytes = await file.readAsBytes();
+
+    final contentType = mediaType == 'video'
+        ? 'video/${normalizedExt.isEmpty ? 'mp4' : normalizedExt}'
+        : 'image/${normalizedExt.isEmpty ? 'jpeg' : normalizedExt}';
+
+    await ref.putData(bytes, SettableMetadata(contentType: contentType));
+    final downloadUrl = await ref.getDownloadURL();
+    final uploaderName = await getUserDisplayName(uid) ?? 'Member';
+
+    await _rooms.doc(roomId).collection('media').add({
+      'roomId': roomId,
+      'type': mediaType,
+      'url': downloadUrl,
+      'fileName': fileName,
+      'storagePath': storagePath,
+      'uploadedBy': uid,
+      'uploaderName': uploaderName,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    await _rooms.doc(roomId).collection('auditLog').add({
+      'action': 'trip_media_uploaded',
+      'performedBy': uid,
+      'timestamp': FieldValue.serverTimestamp(),
+      'mediaType': mediaType,
+      'fileName': fileName,
+    });
+  }
+
+  Future<void> deleteRoomMedia({
+    required String roomId,
+    required String mediaId,
+    required String requesterUid,
+  }) async {
+    final roomSnap = await _rooms.doc(roomId).get();
+    if (!roomSnap.exists) {
+      throw Exception('Room not found');
+    }
+    final roomData = roomSnap.data() as Map<String, dynamic>;
+    final createdBy = (roomData['createdBy'] ?? '').toString();
+    if (createdBy != requesterUid) {
+      throw Exception('Only room creator can delete media');
+    }
+
+    final mediaRef = _rooms.doc(roomId).collection('media').doc(mediaId);
+    final mediaSnap = await mediaRef.get();
+    if (!mediaSnap.exists) return;
+
+    final media = mediaSnap.data() as Map<String, dynamic>;
+    final storagePath = (media['storagePath'] ?? '').toString();
+    final url = (media['url'] ?? '').toString();
+
+    try {
+      if (storagePath.isNotEmpty) {
+        await FirebaseStorage.instance.ref().child(storagePath).delete();
+      } else if (url.isNotEmpty) {
+        await FirebaseStorage.instance.refFromURL(url).delete();
+      }
+    } catch (_) {
+      // File may already be missing; still delete metadata.
+    }
+
+    await mediaRef.delete();
+
+    await _rooms.doc(roomId).collection('auditLog').add({
+      'action': 'trip_media_deleted',
+      'performedBy': requesterUid,
+      'timestamp': FieldValue.serverTimestamp(),
+      'mediaId': mediaId,
+    });
+  }
+
+  Future<void> leaveTripRoomForUser({
+    required String roomId,
+    required String userId,
+  }) async {
+    final roomRef = _rooms.doc(roomId);
+    final roomSnap = await roomRef.get();
+    if (!roomSnap.exists) return;
+
+    final data = roomSnap.data() as Map<String, dynamic>;
+    final createdBy = (data['createdBy'] ?? '').toString();
+    final members = List<String>.from(data['members'] ?? []);
+    final memberUids = List<String>.from(data['memberUids'] ?? []);
+
+    final nextMembers = members.where((id) => id != userId).toList();
+    final nextMemberUids = memberUids.where((id) => id != userId).toList();
+
+    if (createdBy == userId) {
+      await roomRef.collection('auditLog').add({
+        'action': 'trip_deleted_by_creator_leave',
+        'performedBy': userId,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      await roomRef.delete();
+      return;
+    }
+
+    if (nextMembers.isEmpty) {
+      await roomRef.collection('auditLog').add({
+        'action': 'trip_left',
+        'performedBy': userId,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      // Delete only the root room document from client. Subcollection recursive
+      // cleanup requires elevated permissions/server context.
+      await roomRef.delete();
+      return;
+    }
+
+    await roomRef.collection('auditLog').add({
+      'action': 'trip_left',
+      'performedBy': userId,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    await roomRef.update({
+      'members': nextMembers,
+      'memberUids': nextMemberUids,
+    });
   }
 
   /// Resolve a user's display name by uid. Returns null if not found.
@@ -589,12 +1336,13 @@ class FirestoreService {
         'receipts/$roomId/$fileName',
       );
 
-      if (receiptFile is File) {
-        await ref.putFile(receiptFile);
+      if (receiptFile is XFile) {
+        final bytes = await receiptFile.readAsBytes();
+        await ref.putData(bytes);
       } else if (receiptFile is Uint8List) {
         await ref.putData(receiptFile);
       } else {
-        throw Exception('Unsupported file type');
+        throw Exception('Unsupported file type: ${receiptFile.runtimeType}');
       }
 
       return await ref.getDownloadURL();
@@ -650,6 +1398,7 @@ class FirestoreService {
   Future<void> joinRoom(String roomId, String uid) async {
     await _rooms.doc(roomId).update({
       'members': FieldValue.arrayUnion([uid]),
+      'memberUids': FieldValue.arrayUnion([uid]),
     });
     // optionally update users/{uid}.joinedRooms - keep denormalization decision to you
   }
@@ -658,6 +1407,7 @@ class FirestoreService {
   Future<void> leaveRoom(String roomId, String uid) async {
     await _rooms.doc(roomId).update({
       'members': FieldValue.arrayRemove([uid]),
+      'memberUids': FieldValue.arrayRemove([uid]),
     });
   }
 
@@ -1060,19 +1810,38 @@ class FirestoreService {
   }
 
   /// Mark a task instance as completed or pending
+  /// Mark a task instance as completed or pending
+  /// Updates user points accordingly (+10 normal, +20 volunteer)
   Future<void> markTaskInstanceAsCompleted(
     String roomId,
     String taskInstanceId,
     bool isCompleted,
   ) async {
-    await _rooms
-        .doc(roomId)
-        .collection('taskInstances')
-        .doc(taskInstanceId)
-        .update({
-          'isCompleted': isCompleted,
-          'completedAt': isCompleted ? FieldValue.serverTimestamp() : null,
-        });
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    return _db.runTransaction((transaction) async {
+      final taskInstanceRef = _rooms
+          .doc(roomId)
+          .collection('taskInstances')
+          .doc(taskInstanceId);
+      final taskInstanceDoc = await transaction.get(taskInstanceRef);
+
+      if (!taskInstanceDoc.exists) return;
+
+      final taskData = taskInstanceDoc.data() as Map<String, dynamic>;
+      final currentStatus = taskData['isCompleted'] == true;
+
+      // If status hasn't changed, do nothing
+      if (currentStatus == isCompleted) return;
+
+      // Update Task Instance
+      transaction.update(taskInstanceRef, {
+        'isCompleted': isCompleted,
+        'completedAt': isCompleted ? FieldValue.serverTimestamp() : null,
+        'completedBy': isCompleted ? currentUserId : FieldValue.delete(),
+      });
+    });
   }
 
   /// Get room members with their profiles
@@ -1364,35 +2133,38 @@ class FirestoreService {
       final requestDate = data['scheduledDate'];
       final offeredDate = offeredDoc.data()?['scheduledDate'];
 
-      // 2. Perform Swap
-      final batch = _db.batch();
+      // 2. Perform Swap & Award Points in Transaction
+      // We need to use runTransaction now to handle points safely
+      await _db.runTransaction((transaction) async {
+        // Re-read docs inside transaction for safety
+        final tDoc = await transaction.get(taskRef);
+        final otDoc = await transaction.get(offeredTaskRef);
+        if (!tDoc.exists || !otDoc.exists) throw Exception('Task invalid');
 
-      // Update Initiator's Task (assigned to Responder)
-      batch.update(taskRef, {
-        'assignedTo': responderId,
-        'swapRequest': FieldValue.delete(), // Clear request
-        'swappedWith': {
-          'userId': responderId,
-          'userName': responderName,
-          'originalDate': offeredDate,
-          'swappedAt': FieldValue.serverTimestamp(),
-          'swappedBy': requesterName,
-        },
+        // Swap assignments
+        transaction.update(taskRef, {
+          'assignedTo': responderId,
+          'swapRequest': FieldValue.delete(),
+          'swappedWith': {
+            'userId': responderId,
+            'userName': responderName,
+            'originalDate': offeredDate,
+            'swappedAt': FieldValue.serverTimestamp(),
+            'swappedBy': requesterName,
+          },
+        });
+
+        transaction.update(offeredTaskRef, {
+          'assignedTo': currentUserId,
+          'swappedWith': {
+            'userId': currentUserId,
+            'userName': requesterName,
+            'originalDate': requestDate,
+            'swappedAt': FieldValue.serverTimestamp(),
+            'swappedBy': requesterName,
+          },
+        });
       });
-
-      // Update Responder's Task (assigned to Initiator)
-      batch.update(offeredTaskRef, {
-        'assignedTo': currentUserId,
-        'swappedWith': {
-          'userId': currentUserId,
-          'userName': requesterName,
-          'originalDate': requestDate,
-          'swappedAt': FieldValue.serverTimestamp(),
-          'swappedBy': requesterName,
-        },
-      });
-
-      await batch.commit();
 
       // 3. Notify Responder
       await createNotification(

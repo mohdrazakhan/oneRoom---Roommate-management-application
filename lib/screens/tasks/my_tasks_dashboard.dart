@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../services/firestore_service.dart';
 import 'package:intl/intl.dart';
+
+import '../../services/firestore_service.dart';
 
 class MyTasksDashboard extends StatefulWidget {
   const MyTasksDashboard({super.key});
@@ -843,6 +844,7 @@ class _MyTasksDashboardState extends State<MyTasksDashboard>
                   )
                 : null,
           ),
+
           // Show swap info if task was swapped
           if (swappedWith != null) ...[
             const Divider(height: 1),

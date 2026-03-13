@@ -1,5 +1,5 @@
 // lib/screens/profile/profile_screen.dart
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -41,7 +41,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _isUploading = true);
 
       final authProvider = context.read<AuthProvider>();
-      await authProvider.uploadProfilePhoto(File(image.path));
+      // Pass XFile directly as per updated AuthProvider refactor
+      await authProvider.uploadProfilePhoto(image);
 
       if (!mounted) return;
       setState(() => _isUploading = false);

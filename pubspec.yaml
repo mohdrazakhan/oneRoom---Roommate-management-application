@@ -1,7 +1,7 @@
 name: one_room
 description: "A new Flutter project."
 publish_to: 'none'
-version: 1.0.0+6
+version: 1.0.0+7
 
 environment:
   sdk: ^3.9.0
@@ -17,6 +17,8 @@ dependencies:
   cloud_firestore: ^5.4.4
   firebase_storage: ^12.3.4
   firebase_messaging: ^15.1.3
+  firebase_analytics: ^11.3.3
+  firebase_in_app_messaging: ^0.8.0+3
   firebase_app_check: ^0.3.2+10
   google_sign_in: ^6.2.2
   sign_in_with_apple: ^6.1.4
@@ -46,10 +48,14 @@ dependencies:
   mobile_scanner: ^7.1.4
   record: ^6.1.2
   permission_handler: ^12.0.1
+  flutter_contacts: ^1.1.9+2
   audioplayers: ^6.5.1
+  app_links: ^3.5.0  # Deep linking support
   # video and audio
   video_player: ^2.10.1
   chewie: ^1.13.0
+  firebase_remote_config: ^5.5.0
+  flutter_dynamic_icon_plus: ^1.4.0
 
 dev_dependencies:
   flutter_test:

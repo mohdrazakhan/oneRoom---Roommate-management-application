@@ -8,12 +8,14 @@ import 'providers/rooms_provider.dart';
 import 'services/navigation_service.dart';
 import 'services/notification_service.dart';
 import 'services/subscription_service.dart';
+import 'services/deep_link_service.dart';
 
 // Screens (adjust imports if your paths differ)
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/signup_screen.dart';
 import 'screens/home/dashboard_screen.dart';
 import 'screens/home/create_room_screen.dart';
+import 'screens/home/join_room_screen.dart';
 import 'screens/expenses/expenses_list_screen.dart';
 import 'screens/subscription/subscription_screen.dart';
 
@@ -24,6 +26,7 @@ class MyApp extends StatelessWidget {
   static const String routeSignup = '/signup';
   static const String routeDashboard = '/dashboard';
   static const String routeCreateRoom = '/create-room';
+  static const String routeJoinRoom = '/join-room';
   static const String routeRoomExpenses = '/room-expenses';
   static const String routeSubscription = '/subscription';
 
@@ -136,6 +139,15 @@ class MyApp extends StatelessWidget {
 
       // onGenerateRoute handles routes that need arguments (e.g., room id + name)
       onGenerateRoute: (settings) {
+        // Join room with optional roomId from deep link
+        if (settings.name == routeJoinRoom) {
+          final args = settings.arguments as Map<String, dynamic>?;
+          final roomId = args?['roomId'] as String?;
+          return MaterialPageRoute(
+            builder: (_) => JoinRoomScreen(roomId: roomId),
+          );
+        }
+
         if (settings.name == routeRoomExpenses) {
           final args = settings.arguments;
           if (args is Map<String, dynamic>) {
@@ -232,6 +244,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
           NotificationService().saveTokenForCurrentUser();
           NotificationService().initialize();
           NavigationService().processPendingNotification();
+
+          // Initialize deep linking for room invitations
+          DeepLinkService().initialize(context);
         });
       }
     } else if (uid == null && _initializedForUid != null) {

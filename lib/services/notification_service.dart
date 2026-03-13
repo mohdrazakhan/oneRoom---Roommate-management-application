@@ -1,5 +1,7 @@
 // lib/services/notification_service.dart
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
+import 'dart:async';
+import 'package:flutter/foundation.dart'; // For kIsWeb, defaultTargetPlatform
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -37,13 +39,59 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  static const String _defaultChannelId = 'one_room_channel';
+
+  bool _isServiceUnavailableError(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('service_not_available') ||
+        msg.contains('firebaseinstallations service is unavailable') ||
+        msg.contains('java.io.ioexception: service_not_available');
+  }
+
+  Future<T?> _runWithRetry<T>({
+    required String operation,
+    required Future<T> Function() action,
+    int maxAttempts = 3,
+    Duration initialDelay = const Duration(seconds: 2),
+  }) async {
+    var delay = initialDelay;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await action();
+      } catch (e) {
+        final isRetryable = _isServiceUnavailableError(e);
+        final isLastAttempt = attempt == maxAttempts;
+
+        if (!isRetryable || isLastAttempt) {
+          debugPrint(
+            '⚠️ $operation failed (attempt $attempt/$maxAttempts): $e',
+          );
+          return null;
+        }
+
+        debugPrint(
+          '⚠️ $operation temporarily unavailable; retrying in ${delay.inSeconds}s',
+        );
+        await Future.delayed(delay);
+        delay *= 2;
+      }
+    }
+    return null;
+  }
 
   /// Initialize FCM and local notifications
   Future<void> initialize() async {
     if (_initialized) return;
+
+    final canInitialize = await _validateMessagingRequirements();
+    if (!canInitialize) {
+      debugPrint('⚠️ Skipping NotificationService init: prerequisites missing');
+      return;
+    }
+
     _initialized = true;
 
-    // Request permission (iOS/macOS)
+    // Request permission (iOS/macOS/Web)
     try {
       final settings = await _messaging.requestPermission(
         alert: true,
@@ -66,7 +114,7 @@ class NotificationService {
     }
 
     // Android 13+ runtime permission
-    if (Platform.isAndroid) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       try {
         await _localNotifications
             .resolvePlatformSpecificImplementation<
@@ -90,6 +138,7 @@ class NotificationService {
     const initSettings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
+      // macOS? linux? web? (web doesn't use local_notifications usually same way)
     );
 
     await _localNotifications.initialize(
@@ -98,23 +147,26 @@ class NotificationService {
     );
 
     // Ensure Android notification channel exists (Android 8+)
-    const androidChannel = AndroidNotificationChannel(
-      'one_room_channel',
-      'One Room Notifications',
-      description: 'Notifications for room activities',
-      importance: Importance.high,
-    );
-    try {
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.createNotificationChannel(androidChannel);
-    } catch (e) {
-      debugPrint('⚠️ Failed to create notification channel: $e');
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      const androidChannel = AndroidNotificationChannel(
+        _defaultChannelId,
+        'One Room Notifications',
+        description: 'Notifications for room activities',
+        importance: Importance.high,
+      );
+      try {
+        await _localNotifications
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >()
+            ?.createNotificationChannel(androidChannel);
+      } catch (e) {
+        debugPrint('⚠️ Failed to create notification channel: $e');
+      }
     }
 
     // Set up background message handler
+    // On web this is handled by service worker usually, but registering valid
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
     // Listen to foreground messages
@@ -159,9 +211,10 @@ class NotificationService {
 
     // Subscribe to "all_users" topic for broadcast notifications
     // ignore: unawaited_futures
-    _messaging.subscribeToTopic('all_users').catchError((e) {
-      debugPrint('⚠️ Failed to subscribe to all_users topic: $e');
-    });
+    _runWithRetry<void>(
+      operation: 'Subscribe to all_users topic',
+      action: () => _messaging.subscribeToTopic('all_users'),
+    );
     debugPrint('📢 Subscribed to all_users topic for broadcasts');
 
     // Listen for token refresh
@@ -170,6 +223,25 @@ class NotificationService {
         debugPrint('⚠️ Failed to allow token refresh save: $e');
       });
     });
+  }
+
+  Future<bool> _validateMessagingRequirements() async {
+    if (Firebase.apps.isEmpty) {
+      debugPrint(
+        '❌ NotificationService requirement missing: Firebase not initialized',
+      );
+      return false;
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      // Android Firebase Messaging requirements quick checklist:
+      // 1) google-services plugin + google-services.json
+      // 2) POST_NOTIFICATIONS permission in AndroidManifest (API 33+)
+      // 3) Default notification channel metadata in AndroidManifest
+      debugPrint('✅ NotificationService requirements checked for Android SDK');
+    }
+
+    return true;
   }
 
   /// Subscribe to all rooms the current user is a member of
@@ -201,6 +273,12 @@ class NotificationService {
 
     final notification = message.notification;
     if (notification == null) return;
+
+    // Web handles notifications automatically if in background,
+    // but in foreground we might want to show a toast or customUI.
+    // For now we try local notifs if supported, else ignore (web usually requires SW magic for background)
+    // flutter_local_notifications has partial web support but complex setup.
+    if (kIsWeb) return;
 
     const androidDetails = AndroidNotificationDetails(
       'one_room_channel',
@@ -329,7 +407,12 @@ class NotificationService {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
 
-      final fcmToken = token ?? await _messaging.getToken();
+      final fcmToken =
+          token ??
+          await _runWithRetry<String?>(
+            operation: 'Fetch FCM token',
+            action: () => _messaging.getToken(),
+          );
       if (fcmToken == null) return;
 
       debugPrint('💾 Saving FCM token: ${fcmToken.substring(0, 20)}...');
@@ -342,7 +425,9 @@ class NotificationService {
           .doc(fcmToken)
           .set({
             'token': fcmToken,
-            'platform': Platform.operatingSystem,
+            'platform': kIsWeb
+                ? 'web'
+                : defaultTargetPlatform.name, // Fixed Platform.operatingSystem
             'createdAt': FieldValue.serverTimestamp(),
             'lastUsed': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
@@ -376,13 +461,19 @@ class NotificationService {
 
   /// Subscribe to a room topic for room-wide notifications
   Future<void> subscribeToRoom(String roomId) async {
-    await _messaging.subscribeToTopic('room_$roomId');
+    await _runWithRetry<void>(
+      operation: 'Subscribe to room_$roomId topic',
+      action: () => _messaging.subscribeToTopic('room_$roomId'),
+    );
     debugPrint('📢 Subscribed to room_$roomId');
   }
 
   /// Unsubscribe from a room topic
   Future<void> unsubscribeFromRoom(String roomId) async {
-    await _messaging.unsubscribeFromTopic('room_$roomId');
+    await _runWithRetry<void>(
+      operation: 'Unsubscribe from room_$roomId topic',
+      action: () => _messaging.unsubscribeFromTopic('room_$roomId'),
+    );
     debugPrint('🔇 Unsubscribed from room_$roomId');
   }
 

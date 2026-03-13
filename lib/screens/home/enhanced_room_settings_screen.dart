@@ -1,5 +1,6 @@
 // ignore_for_file: deprecated_member_use
-import 'dart:io';
+// import 'dart:io'; // Removed for web support
+// keeping for safe measure if needed by other parts not visible, but generally we avoid it.
 import '../../widgets/safe_web_image.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -9,12 +10,15 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../services/subscription_service.dart';
+import '../../services/deep_link_service.dart';
 import 'package:flutter/services.dart';
 import '../../Models/room.dart';
 import '../../services/firestore_service.dart';
 import '../../services/expense_export_service.dart';
 import 'expense_analytics_screen.dart';
 import '../../widgets/premium_avatar_wrapper.dart';
+import '../../widgets/ad_banner_widget.dart';
+// import 'package:flutter_dynamic_icon/flutter_dynamic_icon.dart'; // Removed for automatic switching
 
 class EnhancedRoomSettingsScreen extends StatefulWidget {
   final Room room;
@@ -33,11 +37,13 @@ class _EnhancedRoomSettingsScreenState
   bool _isUploadingPhoto = false;
   double _totalExpenditure = 0.0;
   int _totalTransactions = 0;
+  String _roomName = ''; // Added local state
   final _firestoreService = FirestoreService();
   final _picker = ImagePicker();
 
   final List<String> _currencies = [
     '₹',
+    'रु',
     '\$',
     '€',
     '£',
@@ -45,11 +51,13 @@ class _EnhancedRoomSettingsScreenState
     'R\$',
     'A\$',
     'C\$',
+    'रु',
   ];
 
   @override
   void initState() {
     super.initState();
+    _roomName = widget.room.name;
     _loadMemberProfiles();
     _loadExpenseStats();
   }
@@ -143,8 +151,10 @@ class _EnhancedRoomSettingsScreenState
         'rooms/${widget.room.id}/photo_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
 
-      // Upload new photo (don't try to delete old one, as it causes issues)
-      final uploadTask = await storageRef.putFile(File(image.path));
+      // Upload new photo (universal support)
+      final bytes = await image.readAsBytes();
+      final metadata = SettableMetadata(contentType: 'image/jpeg');
+      final uploadTask = await storageRef.putData(bytes, metadata);
       final photoUrl = await uploadTask.ref.getDownloadURL();
 
       // Update room in Firestore
@@ -194,7 +204,7 @@ class _EnhancedRoomSettingsScreenState
   }
 
   Future<void> _changeRoomName() async {
-    final controller = TextEditingController(text: widget.room.name);
+    final controller = TextEditingController(text: _roomName);
 
     final newName = await showDialog<String>(
       context: context,
@@ -221,11 +231,14 @@ class _EnhancedRoomSettingsScreenState
       ),
     );
 
-    if (newName != null && newName.isNotEmpty && newName != widget.room.name) {
+    if (newName != null && newName.isNotEmpty && newName != _roomName) {
       try {
         await _firestoreService.updateRoom(widget.room.id, {'name': newName});
 
         if (mounted) {
+          setState(() {
+            _roomName = newName;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Room name updated!'),
@@ -620,14 +633,38 @@ class _EnhancedRoomSettingsScreenState
           const SizedBox(height: 16),
 
           // Room Name
-          Text(
-            widget.room.name,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
+          // Room Name
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _roomName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(width: 8),
+              if (widget.room.createdBy ==
+                  FirebaseAuth.instance.currentUser?.uid)
+                GestureDetector(
+                  onTap: _changeRoomName,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.edit,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                ),
+            ],
           ),
 
           const SizedBox(height: 8),
@@ -948,7 +985,7 @@ class _EnhancedRoomSettingsScreenState
           const SizedBox(height: 16),
           if (_isLoadingProfiles)
             const Center(child: CircularProgressIndicator())
-          else
+          else ...[
             ...widget.room.members.asMap().entries.map((entry) {
               final index = entry.key;
               final memberId = entry.value;
@@ -1076,8 +1113,48 @@ class _EnhancedRoomSettingsScreenState
                 ],
               );
             }),
+            const Divider(height: 24),
+            _buildSponsoredMemberAdRow(),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildSponsoredMemberAdRow() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: const Icon(Icons.campaign_rounded, color: Colors.orange),
+            ),
+            const SizedBox(width: 16),
+            const Expanded(
+              child: Text(
+                'Sponsored',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: const AdBannerWidget(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1263,7 +1340,7 @@ class _EnhancedRoomSettingsScreenState
           const SizedBox(height: 16),
           Center(
             child: QrImageView(
-              data: widget.room.id,
+              data: DeepLinkService().createRoomInviteLink(widget.room.id),
               version: QrVersions.auto,
               size: 120,
               backgroundColor: Colors.white,

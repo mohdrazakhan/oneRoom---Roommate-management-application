@@ -205,3 +205,4 @@ match /rooms/{roomId}/taskInstances/{instanceId} {
   allow read, write: if isMemberOfRoom(roomId);
 }
 ```
+now help me in one this currently user can have option to swap their task with other but the issue is user can do this only with next or upcomming task but i want to make this user can do thid with their current or today task as well user have option to swap their today task with other as well if both accpect swaping then just swap their task it does not effect to others task and it should also refelect in task calender but swap task have litter note or marks that Swaped task so other and user itself can see that this task is swaped with other

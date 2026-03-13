@@ -20,7 +20,7 @@ class _MyBannerAdState extends State<MyBannerAd> {
 
     _bannerAd = BannerAd(
       size: AdSize.banner,
-      adUnitId: 'ca-app-pub-3940256099942544/6300978111', // TEST BANNER ID
+      adUnitId: 'ca-app-pub-1174538697381859/5744335517', // Real Ad Unit ID
       listener: BannerAdListener(
         onAdLoaded: (ad) {
           setState(() => _isLoaded = true);
